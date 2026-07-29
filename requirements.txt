@@ -1,0 +1,85 @@
+# ==============================
+# BACKEND - FASTAPI
+# ==============================
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pydantic-settings
+
+# ==============================
+# ENVIRONMENT & HTTP
+# ==============================
+python-dotenv
+requests
+httpx
+
+# ==============================
+# DATABASE
+# ==============================
+sqlalchemy
+
+# ==============================
+# DATA SCIENCE
+# ==============================
+numpy
+pandas
+scipy
+scikit-learn
+
+# ==============================
+# DEEP LEARNING
+# ==============================
+torch
+torchvision
+timm
+transformers
+accelerate
+
+# ==============================
+# COMPUTER VISION
+# ==============================
+opencv-python
+Pillow
+scikit-image
+
+# ==============================
+# DOCUMENT FORENSICS
+# ==============================
+PyWavelets
+#photoholmes
+
+# ==============================
+# OCR
+# ==============================
+easyocr
+
+# ==============================
+# PDF PROCESSING
+# ==============================
+PyMuPDF
+pdf2image
+
+# ==============================
+# VIDEO PROCESSING
+# ==============================
+imageio
+imageio-ffmpeg
+moviepy
+
+# ==============================
+# IMAGE / DATA UTILITIES
+# ==============================
+matplotlib
+tqdm
+
+# ==============================
+# REPORT GENERATION
+# ==============================
+reportlab
+
+# ==============================
+# TESTING
+# ==============================
+pytest
+pytest-asyncio

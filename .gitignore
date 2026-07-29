@@ -1,0 +1,71 @@
+# =========================
+# Python
+# =========================
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# =========================
+# Environment variables
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Node / React
+# =========================
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# =========================
+# Python build files
+# =========================
+*.egg-info/
+dist/
+build/
+
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Temporary files
+# =========================
+*.tmp
+*.temp
+
+# =========================
+# Large ML model files
+# =========================
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.pth
+# Ignore all temporary uploaded files
+data/temp/uploads/
