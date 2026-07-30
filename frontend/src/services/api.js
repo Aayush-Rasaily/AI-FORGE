@@ -99,3 +99,23 @@ export async function analyzeImage(
         throw error;
     }
 }
+
+export function getArtifactUrl(artifactPath) {
+
+    if (!artifactPath) {
+        return "";
+    }
+
+    // Full URL
+    if (artifactPath.startsWith("http")) {
+        return artifactPath;
+    }
+
+    // Backend API path
+    if (artifactPath.startsWith("/api/")) {
+        return `${API_BASE_URL}${artifactPath}`;
+    }
+
+    // Fallback for filesystem-style path
+    return `${API_BASE_URL}/${artifactPath.replaceAll("\\", "/")}`;
+}

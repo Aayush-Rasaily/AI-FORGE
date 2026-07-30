@@ -3,7 +3,9 @@ import { useState } from "react";
 import {
   uploadEvidence,
   analyzeImage,
+  getArtifactUrl,
 } from "../services/api";
+
 
 
 function Investigation() {
@@ -441,27 +443,56 @@ function Investigation() {
                     {result.status ===
                       "completed" && (
 
-                      <>
+                      
 
-                        {/* Verdict */}
+  <>
 
-                        <div className="mt-8">
+    {/* ========================= */}
+    {/* ORIGINAL EVIDENCE */}
+    {/* ========================= */}
+
+    <div className="mt-8">
+
+      <h3 className="text-xl font-bold">
+        Original Evidence
+      </h3>
+
+      <div className="mt-4 overflow-hidden rounded-xl border border-slate-800 bg-black">
+
+        <img
+          src={URL.createObjectURL(
+            files.find(
+              (file) =>
+                file.name === result.filename
+            )
+          )}
+
+          alt="Original Evidence"
+
+          className="max-h-[500px] w-full object-contain"
+
+        />
+
+      </div>
+
+    </div>
 
 
-                          <p className="text-sm text-slate-400">
+    {/* ========================= */}
+    {/* VERDICT */}
+    {/* ========================= */}
 
-                            Forensic Assessment
+    <div className="mt-8">
 
-                          </p>
+      <p className="text-sm text-slate-400">
+        Forensic Assessment
+      </p>
 
+      <p className="mt-2 text-3xl font-bold">
+        {result.analysis.verdict}
+      </p>
 
-                          <p className="mt-2 text-3xl font-bold">
-
-                            {result.analysis.verdict}
-
-                          </p>
-
-                        </div>
+    </div>
 
 
                         {/* Score */}
@@ -607,15 +638,141 @@ function Investigation() {
                         </div>
 
 
-                        {/* Evidence ID */}
+{/* VISUAL FORENSIC EVIDENCE */}
+{/* =============================== */}
 
-                        <p className="mt-8 text-xs text-slate-500">
+<div className="mt-12">
 
-                          Evidence ID:
-                          {" "}
-                          {result.evidenceId}
+  <h3 className="text-2xl font-bold">
+    Visual Forensic Evidence
+  </h3>
 
-                        </p>
+  <p className="mt-2 text-sm text-slate-400">
+    Forensic visualizations generated
+    during evidence analysis.
+  </p>
+
+
+  <div className="mt-6 grid gap-6 md:grid-cols-3">
+
+
+    {/* ========================= */}
+    {/* ELA */}
+    {/* ========================= */}
+
+    <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+
+      <div className="border-b border-slate-800 p-5">
+
+        <h4 className="font-semibold">
+          Error Level Analysis
+        </h4>
+
+        <p className="mt-1 text-xs text-slate-500">
+          Compression anomaly detection
+        </p>
+
+      </div>
+
+
+      <div className="flex h-72 items-center justify-center bg-black">
+
+        <img
+
+          src={getArtifactUrl(
+            result.analysis.artifacts.ela
+          )}
+
+          alt="ELA Forensic Analysis"
+
+          className="h-full w-full object-contain"
+
+        />
+
+      </div>
+
+    </div>
+
+
+    {/* ========================= */}
+    {/* EDGE */}
+    {/* ========================= */}
+
+    <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+
+      <div className="border-b border-slate-800 p-5">
+
+        <h4 className="font-semibold">
+          Edge Detection
+        </h4>
+
+        <p className="mt-1 text-xs text-slate-500">
+          Structural boundary analysis
+        </p>
+
+      </div>
+
+
+      <div className="flex h-72 items-center justify-center bg-black">
+
+        <img
+
+          src={getArtifactUrl(
+            result.analysis.artifacts.edges
+          )}
+
+          alt="Edge Forensic Analysis"
+
+          className="h-full w-full object-contain"
+
+        />
+
+      </div>
+
+    </div>
+
+
+    {/* ========================= */}
+    {/* WAVELET */}
+    {/* ========================= */}
+
+    <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+
+      <div className="border-b border-slate-800 p-5">
+
+        <h4 className="font-semibold">
+          Wavelet Analysis
+        </h4>
+
+        <p className="mt-1 text-xs text-slate-500">
+          High-frequency artifact detection
+        </p>
+
+      </div>
+
+
+      <div className="flex h-72 items-center justify-center bg-black">
+
+        <img
+
+          src={getArtifactUrl(
+            result.analysis.artifacts.wavelet
+          )}
+
+          alt="Wavelet Forensic Analysis"
+
+          className="h-full w-full object-contain"
+
+        />
+
+      </div>
+
+    </div>
+
+
+  </div>
+
+</div>
 
                       </>
 

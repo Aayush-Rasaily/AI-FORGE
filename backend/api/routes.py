@@ -1,6 +1,13 @@
 import os
 import uuid
+from fastapi import (
+    APIRouter,
+    HTTPException
+)
 
+from fastapi.responses import FileResponse
+
+from pathlib import Path
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
@@ -158,17 +165,13 @@ async def analyze_uploaded_image(
         )
     )
 
-
     if not image_files:
-
         raise HTTPException(
             status_code=404,
             detail="Evidence not found"
         )
 
-
     image_path = image_files[0]
-
 
     # Run forensic analysis
     try:
@@ -177,6 +180,19 @@ async def analyze_uploaded_image(
             str(image_path)
         )
 
+        # Add API URLs for generated artifacts
+        if "artifacts" in result:
+
+            result["artifacts"] = {
+                "ela":
+                    f"/api/evidence/artifacts/{evidence_id}/ela",
+
+                "edges":
+                    f"/api/evidence/artifacts/{evidence_id}/edges",
+
+                "wavelet":
+                    f"/api/evidence/artifacts/{evidence_id}/wavelet"
+            }
 
         return {
 
@@ -190,10 +206,88 @@ async def analyze_uploaded_image(
 
         }
 
-
     except Exception as e:
 
         raise HTTPException(
             status_code=500,
             detail=str(e)
         )
+@router.get(
+    "/evidence/artifacts/{evidence_id}/{artifact_type}"
+)
+async def get_evidence_artifact(
+    evidence_id: str,
+    artifact_type: str
+):
+
+    # Find uploaded evidence
+    image_files = list(
+        UPLOAD_DIR.glob(
+            f"{evidence_id}.*"
+        )
+    )
+
+    if not image_files:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Evidence not found"
+        )
+
+
+    image_path = image_files[0]
+
+
+    # Artifact directory
+    analysis_dir = (
+        image_path.parent /
+        "analysis"
+    )
+
+
+    # Supported artifact types
+    artifact_map = {
+
+        "ela":
+            analysis_dir /
+            f"{image_path.stem}_ela.jpg",
+
+        "edges":
+            analysis_dir /
+            f"{image_path.stem}_edges.jpg",
+
+        "wavelet":
+            analysis_dir /
+            f"{image_path.stem}_wavelet.jpg"
+
+    }
+
+
+    if artifact_type not in artifact_map:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid artifact type. "
+                "Use ela, edges, or wavelet."
+            )
+        )
+
+
+    artifact_path = artifact_map[
+        artifact_type
+    ]
+
+
+    if not artifact_path.exists():
+
+        raise HTTPException(
+            status_code=404,
+            detail="Artifact not found"
+        )
+
+
+    return FileResponse(
+        path=artifact_path,
+        media_type="image/jpeg"
+    )
