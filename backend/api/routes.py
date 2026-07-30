@@ -1,20 +1,24 @@
 import os
 import uuid
+from pathlib import Path
+
 from fastapi import (
     APIRouter,
+    UploadFile,
+    File,
     HTTPException
 )
 
 from fastapi.responses import FileResponse
 
-from pathlib import Path
-from pathlib import Path
-
-from fastapi import APIRouter, UploadFile, File, HTTPException
-
 from backend.ingestion.file_router import identify_file_type
-
 from backend.analysis.image_forensics import analyze_image
+from backend.analysis.document_forensics import (
+    analyze_document
+)
+from backend.agents.signature_agent import (
+    verify_signature
+)
 
 
 router = APIRouter(
@@ -291,3 +295,160 @@ async def get_evidence_artifact(
         path=artifact_path,
         media_type="image/jpeg"
     )
+#analyze document    
+@router.post(
+    "/evidence/analyze-document/{evidence_id}"
+)
+async def analyze_uploaded_document(
+    evidence_id: str
+):
+
+    document_files = list(
+
+        UPLOAD_DIR.glob(
+            f"{evidence_id}.pdf"
+        )
+
+    )
+
+
+    if not document_files:
+
+        raise HTTPException(
+
+            status_code=404,
+
+            detail="PDF document not found"
+
+        )
+
+
+    document_path = (
+        document_files[0]
+    )
+
+
+    try:
+
+        result = analyze_document(
+
+            str(document_path)
+
+        )
+
+
+        return {
+
+            "success":
+                True,
+
+            "evidence_id":
+                evidence_id,
+
+            "analysis":
+                result
+
+        }
+
+
+    except Exception as e:
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=str(e)
+
+        )
+        
+#verify signature
+@router.post(
+    "/evidence/verify-signature"
+)
+async def verify_uploaded_signature(
+
+    reference: UploadFile = File(...),
+
+    query: UploadFile = File(...)
+
+):
+
+    signature_dir = (
+        Path("data/temp/signatures")
+    )
+
+    signature_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+
+    reference_path = (
+        signature_dir /
+        f"reference_{uuid.uuid4()}.png"
+    )
+
+
+    query_path = (
+        signature_dir /
+        f"query_{uuid.uuid4()}.png"
+    )
+
+
+    try:
+
+        # Save reference signature
+
+        with open(
+            reference_path,
+            "wb"
+        ) as buffer:
+
+            buffer.write(
+                await reference.read()
+            )
+
+
+        # Save query signature
+
+        with open(
+            query_path,
+            "wb"
+        ) as buffer:
+
+            buffer.write(
+                await query.read()
+            )
+
+
+        # Verify signature
+
+        result = verify_signature(
+
+            str(reference_path),
+
+            str(query_path)
+
+        )
+
+
+        return {
+
+            "success":
+                True,
+
+            "analysis":
+                result
+
+        }
+
+
+    except Exception as e:
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=str(e)
+
+        )

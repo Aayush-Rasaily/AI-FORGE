@@ -1,42 +1,38 @@
 from pathlib import Path
 
 
-# Supported file extensions
-IMAGE_EXTENSIONS = {
-    ".jpg",
-    ".jpeg",
-    ".png",
-    ".webp",
-    ".bmp",
-}
+def identify_file_type(filename: str):
 
-VIDEO_EXTENSIONS = {
-    ".mp4",
-    ".mov",
-    ".avi",
-    ".mkv",
-}
-
-DOCUMENT_EXTENSIONS = {
-    ".pdf",
-}
+    extension = Path(
+        filename
+    ).suffix.lower()
 
 
-def identify_file_type(filename: str) -> str:
-    """
-    Identify the type of uploaded evidence
-    based on its file extension.
-    """
-
-    extension = Path(filename).suffix.lower()
-
-    if extension in IMAGE_EXTENSIONS:
+    # Image files
+    if extension in [
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp"
+    ]:
         return "image"
 
-    if extension in VIDEO_EXTENSIONS:
+
+    # Document files
+    if extension in [
+        ".pdf"
+    ]:
+        return "document"
+
+
+    # Video files
+    if extension in [
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".mkv"
+    ]:
         return "video"
 
-    if extension in DOCUMENT_EXTENSIONS:
-        return "document"
 
     return "unsupported"
