@@ -7,63 +7,52 @@ import {
     getCopyMoveArtifactUrl
 } from "../services/api";
 
+
 function CopyMoveDetection() {
 
     const navigate = useNavigate();
 
+    const [file, setFile] = useState(null);
 
-    const [file, setFile] =
-        useState(null);
+    const [evidenceId, setEvidenceId] = useState("");
 
+    const [result, setResult] = useState(null);
 
-    const [evidenceId, setEvidenceId] =
-        useState("");
+    const [loading, setLoading] = useState(false);
 
+    const [error, setError] = useState("");
 
-    const [result, setResult] =
-        useState(null);
-
-
-    const [loading, setLoading] =
-        useState(false);
-
-
-    const [error, setError] =
-        useState("");
-    
     const [artifactUrl, setArtifactUrl] = useState("");
 
 
-    // --------------------------------
-    // Select File
-    // --------------------------------
+    // ==========================================
+    // SELECT FILE
+    // ==========================================
 
     function handleFileChange(event) {
 
         const selectedFile =
             event.target.files[0];
 
-
         if (!selectedFile) {
             return;
         }
 
-
-        setFile(
-            selectedFile
-        );
-
+        setFile(selectedFile);
 
         setResult(null);
 
-        setError("");
+        setEvidenceId("");
 
+        setArtifactUrl("");
+
+        setError("");
     }
 
 
-    // --------------------------------
-    // Analyze
-    // --------------------------------
+    // ==========================================
+    // ANALYZE IMAGE
+    // ==========================================
 
     async function handleAnalyze() {
 
@@ -74,7 +63,6 @@ function CopyMoveDetection() {
             );
 
             return;
-
         }
 
 
@@ -84,34 +72,44 @@ function CopyMoveDetection() {
 
             setError("");
 
+            setResult(null);
 
-            // --------------------------
-            // Upload
-            // --------------------------
+            setArtifactUrl("");
+
+
+            // ==================================
+            // STEP 1: UPLOAD EVIDENCE
+            // ==================================
 
             const uploadResult =
-                await uploadEvidence(
-                    file
-                );
+                await uploadEvidence(file);
 
 
             const id =
                 uploadResult.evidence_id;
 
 
-            setEvidenceId(
+            setEvidenceId(id);
+
+
+            console.log(
+                "Evidence ID:",
                 id
             );
 
 
-            // --------------------------
-            // Copy-Move Analysis
-            // --------------------------
+            // ==================================
+            // STEP 2: RUN COPY-MOVE ANALYSIS
+            // ==================================
 
             const analysisResult =
-                await analyzeCopyMove(
-                    id
-                );
+                await analyzeCopyMove(id);
+
+
+            console.log(
+                "Copy-Move Analysis Result:",
+                analysisResult
+            );
 
 
             setResult(
@@ -119,23 +117,45 @@ function CopyMoveDetection() {
             );
 
 
-            // Generate artifact URL
-            const artifactUrl =
-                getCopyMoveArtifactUrl(
-                    id
-                );
+            // ==================================
+            // STEP 3: GENERATE ARTIFACT URL
+            // ==================================
+
+            const generatedArtifactUrl =
+                getCopyMoveArtifactUrl(id);
+
+
+            console.log(
+                "Copy-Move Artifact URL:",
+                generatedArtifactUrl
+            );
 
 
             setArtifactUrl(
-                artifactUrl
+                generatedArtifactUrl
             );
 
 
         } catch (error) {
 
+            console.error(
+                "Copy-Move Analysis Error:",
+                error
+            );
+
+
             setError(
-                error.message ||
+
+                error?.response?.data?.detail
+
+                ||
+
+                error.message
+
+                ||
+
                 "Analysis failed"
+
             );
 
 
@@ -148,14 +168,18 @@ function CopyMoveDetection() {
     }
 
 
+    // ==========================================
+    // RENDER
+    // ==========================================
+
     return (
 
         <div className="min-h-screen bg-slate-950 text-white">
 
 
-            {/* ================================ */}
-            {/* Navbar */}
-            {/* ================================ */}
+            {/* ================================= */}
+            {/* NAVBAR */}
+            {/* ================================= */}
 
             <nav className="border-b border-slate-800 px-8 py-5">
 
@@ -168,6 +192,7 @@ function CopyMoveDetection() {
                             AI-FORGE
 
                         </h1>
+
 
                         <p className="text-sm text-slate-400">
 
@@ -197,9 +222,9 @@ function CopyMoveDetection() {
             </nav>
 
 
-            {/* ================================ */}
-            {/* Main */}
-            {/* ================================ */}
+            {/* ================================= */}
+            {/* MAIN */}
+            {/* ================================= */}
 
             <main className="mx-auto max-w-5xl px-8 py-12">
 
@@ -220,9 +245,9 @@ function CopyMoveDetection() {
                 </p>
 
 
-                {/* ================================ */}
-                {/* Upload Card */}
-                {/* ================================ */}
+                {/* ================================= */}
+                {/* UPLOAD CARD */}
+                {/* ================================= */}
 
                 <div className="mt-10 rounded-xl border border-slate-800 bg-slate-900 p-8">
 
@@ -311,46 +336,10 @@ function CopyMoveDetection() {
                 </div>
 
 
-                {/* ================================ */}
-                {/* Result */}
-                {/* ================================ */}
-                {artifactUrl && (
+                {/* ================================= */}
+                {/* ANALYSIS RESULT */}
+                {/* ================================= */}
 
-    <div className="mt-10">
-
-        <h3 className="text-xl font-semibold">
-
-            Forensic Visualization
-
-        </h3>
-
-        <p className="mt-2 text-sm text-slate-400">
-
-            Highlighted regions represent
-            areas associated with detected
-            feature matches.
-
-        </p>
-
-
-        <div className="mt-6 overflow-hidden rounded-xl border border-slate-700">
-
-            <img
-
-                src={artifactUrl}
-
-                alt="Copy-Move Detection Result"
-
-                className="w-full"
-
-            />
-
-        </div>
-
-    </div>
-
-)}
-                
                 {result && (
 
                     <div className="mt-10 rounded-xl border border-slate-800 bg-slate-900 p-8">
@@ -363,7 +352,9 @@ function CopyMoveDetection() {
                         </h3>
 
 
-                        {/* Verdict */}
+                        {/* ================================= */}
+                        {/* VERDICT */}
+                        {/* ================================= */}
 
                         <div className="mt-6">
 
@@ -391,7 +382,9 @@ function CopyMoveDetection() {
                         </div>
 
 
-                        {/* Metrics */}
+                        {/* ================================= */}
+                        {/* METRICS */}
+                        {/* ================================= */}
 
                         <div className="mt-8 grid gap-6 md:grid-cols-3">
 
@@ -446,11 +439,12 @@ function CopyMoveDetection() {
 
                             </div>
 
-
                         </div>
 
 
-                        {/* Evidence ID */}
+                        {/* ================================= */}
+                        {/* EVIDENCE ID */}
+                        {/* ================================= */}
 
                         {evidenceId && (
 
@@ -462,6 +456,7 @@ function CopyMoveDetection() {
 
                                 </p>
 
+
                                 <p className="mt-2 break-all font-mono text-sm text-slate-300">
 
                                     {evidenceId}
@@ -471,32 +466,35 @@ function CopyMoveDetection() {
                             </div>
 
                         )}
-                        
-                        {/* ================================ */}
-                        {/* Forensic Visualization */}
-                        {/* ================================ */}
-
-                        {artifactUrl && (
-
-                            <div className="mt-10">
-
-                                <h3 className="text-xl font-semibold">
-
-                                    Copy-Move Forensic Visualization
-
-                                </h3>
 
 
-                                <p className="mt-2 text-sm text-slate-400">
+                        {/* ================================= */}
+                        {/* COPY-MOVE VISUALIZATION */}
+                        {/* ================================= */}
 
-                                    Highlighted regions indicate
-                                    feature matches identified by
-                                    the copy-move detection algorithm.
-
-                                </p>
+                        <div className="mt-10">
 
 
-                                <div className="mt-6 overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+                            <h3 className="text-xl font-semibold">
+
+                                Copy-Move Forensic Visualization
+
+                            </h3>
+
+
+                            <p className="mt-2 text-sm text-slate-400">
+
+                                Highlighted regions indicate
+                                feature matches identified by
+                                the copy-move detection algorithm.
+
+                            </p>
+
+
+                            {artifactUrl ? (
+
+                                <div className="mt-6 overflow-hidden rounded-xl border border-slate-700 bg-black">
+
 
                                     <img
 
@@ -504,20 +502,62 @@ function CopyMoveDetection() {
 
                                         alt="Copy-Move Detection Visualization"
 
-                                        className="w-full object-contain"
+                                        className="max-h-[600px] w-full object-contain"
+
+                                        onLoad={() => {
+
+                                            console.log(
+
+                                                "Copy-Move artifact loaded successfully"
+
+                                            );
+
+                                        }}
+
+
+                                        onError={(event) => {
+
+                                            console.error(
+
+                                                "Failed to load Copy-Move artifact:",
+
+                                                artifactUrl
+
+                                            );
+
+
+                                            event.currentTarget.style.display =
+                                                "none";
+
+
+                                            setError(
+
+                                                `Unable to load visualization. URL: ${artifactUrl}`
+
+                                            );
+
+                                        }}
 
                                     />
 
                                 </div>
 
-                            </div>
+                            ) : (
 
-                        )}
+                                <p className="mt-6 text-sm text-slate-500">
+
+                                    Visualization unavailable
+
+                                </p>
+
+                            )}
+
+                        </div>
+
 
                     </div>
 
                 )}
-                
 
             </main>
 
@@ -529,3 +569,4 @@ function CopyMoveDetection() {
 
 
 export default CopyMoveDetection;
+

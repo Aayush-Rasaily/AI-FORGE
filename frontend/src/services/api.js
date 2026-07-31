@@ -1,210 +1,461 @@
 const API_BASE_URL = "http://localhost:8000";
 
-// ------------------------------------
-// Check Backend Health
-// ------------------------------------
-export async function checkBackendHealth() {
+
+// ==========================================
+// HELPER: Parse API Error
+// ==========================================
+
+async function getApiError(response, defaultMessage) {
+
     try {
+
+        const errorData =
+            await response.json();
+
+        return (
+            errorData.detail ||
+            errorData.message ||
+            defaultMessage
+        );
+
+    } catch {
+
+        // We intentionally ignore JSON parsing errors
+        // and return the default message.
+        return defaultMessage;
+
+    }
+
+}
+
+
+// ==========================================
+// Check Backend Health
+// ==========================================
+
+export async function checkBackendHealth() {
+
+    try {
+
         const response = await fetch(
             `${API_BASE_URL}/api/health`
         );
 
+
         if (!response.ok) {
-            throw new Error("Backend is not healthy");
+
+            throw new Error(
+                "Backend is not healthy"
+            );
+
         }
+
 
         return await response.json();
 
     } catch (error) {
+
         console.error(
             "Backend health check failed:",
             error
         );
 
         throw error;
+
     }
+
 }
 
 
-// ------------------------------------
+// ==========================================
 // Upload Evidence
-// ------------------------------------
+// ==========================================
+
 export async function uploadEvidence(file) {
+
     try {
-        const formData = new FormData();
 
-        formData.append("file", file);
+        const formData =
+            new FormData();
 
-        const response = await fetch(
-            `${API_BASE_URL}/api/evidence/upload`, {
-                method: "POST",
-                body: formData,
-            }
+
+        formData.append(
+            "file",
+            file
         );
 
+
+        const response =
+            await fetch(
+
+                `${API_BASE_URL}/api/evidence/upload`,
+
+                {
+                    method: "POST",
+                    body: formData
+                }
+
+            );
+
+
         if (!response.ok) {
-            const errorData =
-                await response.json();
+
+            const errorMessage =
+                await getApiError(
+
+                    response,
+
+                    "Evidence upload failed"
+
+                );
+
 
             throw new Error(
-                errorData.detail ||
-                "Evidence upload failed"
+                errorMessage
             );
+
         }
+
 
         return await response.json();
 
     } catch (error) {
+
         console.error(
             "Evidence upload error:",
             error
         );
 
         throw error;
+
     }
+
 }
 
 
-// ------------------------------------
+// ==========================================
 // Analyze Image
-// ------------------------------------
-export async function analyzeImage(
-    evidenceId
-) {
+//
+// IMPORTANT:
+// This now uses the UNIFIED analysis endpoint.
+//
+// Endpoint:
+// POST /api/evidence/analyze/{evidenceId}
+//
+// This runs:
+// - ELA
+// - Edge Detection
+// - Wavelet Analysis
+// - Copy-Move Detection
+// ==========================================
+
+export async function analyzeImage(evidenceId) {
+
     try {
+
         const response = await fetch(
-            `${API_BASE_URL}/api/evidence/analyze-image/${evidenceId}`, {
+            `${API_BASE_URL}/api/evidence/analyze/${evidenceId}`, {
                 method: "POST",
             }
         );
 
         if (!response.ok) {
-            const errorData =
-                await response.json();
+
+            let errorMessage =
+                "Image analysis failed";
+
+            try {
+
+                const errorData =
+                    await response.json();
+
+                errorMessage =
+                    errorData.detail ||
+                    errorMessage;
+
+            } catch {
+                // Ignore JSON parsing error
+            }
 
             throw new Error(
-                errorData.detail ||
-                "Image analysis failed"
+                errorMessage
             );
         }
 
         return await response.json();
 
     } catch (error) {
+
         console.error(
             "Image analysis error:",
             error
         );
 
         throw error;
+
     }
 }
 
-export function getArtifactUrl(artifactPath) {
+// ==========================================
+// Unified Evidence Analysis
+//
+// Same backend endpoint as analyzeImage().
+// Kept as a separate function for compatibility.
+// ==========================================
+
+export async function analyzeEvidence(
+    evidenceId
+) {
+
+    if (!evidenceId) {
+
+        throw new Error(
+            "Evidence ID is required"
+        );
+
+    }
+
+
+    try {
+
+        const response =
+            await fetch(
+
+                `${API_BASE_URL}/api/evidence/analyze/${evidenceId}`,
+
+                {
+                    method: "POST"
+                }
+
+            );
+
+
+        if (!response.ok) {
+
+            const errorMessage =
+                await getApiError(
+
+                    response,
+
+                    "Evidence analysis failed"
+
+                );
+
+
+            throw new Error(
+                errorMessage
+            );
+
+        }
+
+
+        return await response.json();
+
+    } catch (error) {
+
+        console.error(
+            "Unified evidence analysis error:",
+            error
+        );
+
+        throw error;
+
+    }
+
+}
+
+
+// ==========================================
+// Get Artifact URL
+//
+// Supports:
+// 1. Full URL
+// 2. API path
+// 3. Relative path
+// ==========================================
+
+export function getArtifactUrl(
+    artifactPath
+) {
 
     if (!artifactPath) {
+
+        console.error(
+            "Artifact path is missing"
+        );
+
         return "";
+
     }
 
-    // Full URL
-    if (artifactPath.startsWith("http")) {
+
+    // Already a complete URL
+    if (
+        artifactPath.startsWith(
+            "http://"
+        ) ||
+        artifactPath.startsWith(
+            "https://"
+        )
+    ) {
+
         return artifactPath;
+
     }
+
 
     // Backend API path
-    if (artifactPath.startsWith("/api/")) {
-        return `${API_BASE_URL}${artifactPath}`;
+    if (
+        artifactPath.startsWith(
+            "/api/"
+        )
+    ) {
+
+        return (
+            `${API_BASE_URL}` +
+            artifactPath
+        );
+
     }
 
-    // Fallback for filesystem-style path
-    return `${API_BASE_URL}/${artifactPath.replaceAll("\\", "/")}`;
+
+    // Filesystem-style path
+    return (
+
+        `${API_BASE_URL}/` +
+
+        artifactPath
+        .replaceAll(
+            "\\",
+            "/"
+        )
+        .replace(/^\/+/, "")
+
+    );
+
 }
 
-// ========================================
-// Signature Verification
-// ========================================
+
+// ==========================================
+// Verify Signature
+// ==========================================
 
 export async function verifySignature(
     referenceFile,
     queryFile
 ) {
 
-    const formData = new FormData();
+    try {
 
-    formData.append(
-        "reference",
-        referenceFile
-    );
-
-    formData.append(
-        "query",
-        queryFile
-    );
+        const formData =
+            new FormData();
 
 
-    const response = await fetch(
+        formData.append(
+            "reference",
+            referenceFile
+        );
 
-        `${API_BASE_URL}/api/signature/verify`,
 
-        {
-            method: "POST",
-            body: formData
+        formData.append(
+            "query",
+            queryFile
+        );
+
+
+        const response =
+            await fetch(
+
+                `${API_BASE_URL}/api/evidence/verify-signature`,
+
+                {
+                    method: "POST",
+                    body: formData
+                }
+
+            );
+
+
+        if (!response.ok) {
+
+            const errorMessage =
+                await getApiError(
+
+                    response,
+
+                    "Signature verification failed"
+
+                );
+
+
+            throw new Error(
+                errorMessage
+            );
+
         }
 
-    );
 
+        return await response.json();
 
-    if (!response.ok) {
+    } catch (error) {
 
-        const errorData =
-            await response.json();
-
-        throw new Error(
-
-            errorData.detail ||
-            "Signature verification failed"
-
+        console.error(
+            "Signature verification error:",
+            error
         );
+
+        throw error;
 
     }
 
-
-    return await response.json();
 }
 
-// ------------------------------------
+
+// ==========================================
 // Copy-Move Detection
-// ------------------------------------
+// ==========================================
 
 export async function analyzeCopyMove(
     evidenceId
 ) {
 
+    if (!evidenceId) {
+
+        throw new Error(
+            "Evidence ID is required"
+        );
+
+    }
+
+
     try {
 
-        const response = await fetch(
+        const response =
+            await fetch(
 
-            `${API_BASE_URL}/api/evidence/analyze-copy-move/${evidenceId}`,
+                `${API_BASE_URL}/api/evidence/analyze-copy-move/${evidenceId}`,
 
-            {
-                method: "POST",
-            }
+                {
+                    method: "POST"
+                }
 
-        );
+            );
 
 
         if (!response.ok) {
 
-            const errorData =
-                await response.json();
+            const errorMessage =
+                await getApiError(
+
+                    response,
+
+                    "Copy-Move analysis failed"
+
+                );
 
 
             throw new Error(
-
-                errorData.detail ||
-
-                "Copy-Move analysis failed"
-
+                errorMessage
             );
 
         }
@@ -212,94 +463,93 @@ export async function analyzeCopyMove(
 
         return await response.json();
 
-
     } catch (error) {
 
         console.error(
-
             "Copy-Move analysis error:",
-
             error
-
         );
-
 
         throw error;
 
     }
 
 }
-// ------------------------------------
-// Get Copy-Move Artifact
-// ------------------------------------
+
+
+// ==========================================
+// Get Copy-Move Artifact URL
+// ==========================================
 
 export function getCopyMoveArtifactUrl(
     evidenceId
 ) {
 
+    if (!evidenceId) {
+
+        return "";
+
+    }
+
+
     return (
+
         `${API_BASE_URL}` +
+
         `/api/evidence/artifacts/` +
+
         `${evidenceId}/copy_move`
+
     );
 
 }
 
-// ------------------------------------
-// Unified Evidence Analysis
-// ------------------------------------
 
-export async function analyzeEvidence(
-    evidenceId
+// ==========================================
+// Get Unified Artifact URL
+//
+// Artifact types:
+// - ela
+// - edges
+// - wavelet
+// - copy_move
+// ==========================================
+
+export function getUnifiedArtifactUrl(
+    evidenceId,
+    artifactType
 ) {
 
-    try {
+    if (!evidenceId ||
+        !artifactType
+    ) {
 
-        const response = await fetch(
-
-            `${API_BASE_URL}` +
-            `/api/evidence/analyze/` +
-            `${evidenceId}`,
-
-            {
-                method: "POST",
-            }
-
-        );
-
-
-        if (!response.ok) {
-
-            const errorData =
-                await response.json();
-
-
-            throw new Error(
-
-                errorData.detail ||
-
-                "Evidence analysis failed"
-
-            );
-
-        }
-
-
-        return await response.json();
-
-    } catch (error) {
-
-        console.error(
-
-            "Unified evidence analysis error:",
-
-            error
-
-        );
-
-
-        throw error;
+        return "";
 
     }
+
+
+    return (
+
+        `${API_BASE_URL}` +
+
+        `/api/evidence/artifacts/` +
+
+        `${evidenceId}/` +
+
+        `${artifactType}`
+
+    );
+
+}
+
+
+// ==========================================
+// Get API Base URL
+// ==========================================
+
+export function getApiBaseUrl() {
+
+    return API_BASE_URL;
 
 }
