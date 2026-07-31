@@ -119,3 +119,187 @@ export function getArtifactUrl(artifactPath) {
     // Fallback for filesystem-style path
     return `${API_BASE_URL}/${artifactPath.replaceAll("\\", "/")}`;
 }
+
+// ========================================
+// Signature Verification
+// ========================================
+
+export async function verifySignature(
+    referenceFile,
+    queryFile
+) {
+
+    const formData = new FormData();
+
+    formData.append(
+        "reference",
+        referenceFile
+    );
+
+    formData.append(
+        "query",
+        queryFile
+    );
+
+
+    const response = await fetch(
+
+        `${API_BASE_URL}/api/signature/verify`,
+
+        {
+            method: "POST",
+            body: formData
+        }
+
+    );
+
+
+    if (!response.ok) {
+
+        const errorData =
+            await response.json();
+
+        throw new Error(
+
+            errorData.detail ||
+            "Signature verification failed"
+
+        );
+
+    }
+
+
+    return await response.json();
+}
+
+// ------------------------------------
+// Copy-Move Detection
+// ------------------------------------
+
+export async function analyzeCopyMove(
+    evidenceId
+) {
+
+    try {
+
+        const response = await fetch(
+
+            `${API_BASE_URL}/api/evidence/analyze-copy-move/${evidenceId}`,
+
+            {
+                method: "POST",
+            }
+
+        );
+
+
+        if (!response.ok) {
+
+            const errorData =
+                await response.json();
+
+
+            throw new Error(
+
+                errorData.detail ||
+
+                "Copy-Move analysis failed"
+
+            );
+
+        }
+
+
+        return await response.json();
+
+
+    } catch (error) {
+
+        console.error(
+
+            "Copy-Move analysis error:",
+
+            error
+
+        );
+
+
+        throw error;
+
+    }
+
+}
+// ------------------------------------
+// Get Copy-Move Artifact
+// ------------------------------------
+
+export function getCopyMoveArtifactUrl(
+    evidenceId
+) {
+
+    return (
+        `${API_BASE_URL}` +
+        `/api/evidence/artifacts/` +
+        `${evidenceId}/copy_move`
+    );
+
+}
+
+// ------------------------------------
+// Unified Evidence Analysis
+// ------------------------------------
+
+export async function analyzeEvidence(
+    evidenceId
+) {
+
+    try {
+
+        const response = await fetch(
+
+            `${API_BASE_URL}` +
+            `/api/evidence/analyze/` +
+            `${evidenceId}`,
+
+            {
+                method: "POST",
+            }
+
+        );
+
+
+        if (!response.ok) {
+
+            const errorData =
+                await response.json();
+
+
+            throw new Error(
+
+                errorData.detail ||
+
+                "Evidence analysis failed"
+
+            );
+
+        }
+
+
+        return await response.json();
+
+    } catch (error) {
+
+        console.error(
+
+            "Unified evidence analysis error:",
+
+            error
+
+        );
+
+
+        throw error;
+
+    }
+
+}

@@ -182,56 +182,52 @@ def analyze_image(
     # --------------------------------
 
     return {
+        
+    "verdict":
+        verdict,
 
-        "verdict":
-            verdict,
+    "forensic_score":
+        round(
+            forensic_score,
+            4
+        ),
 
+    "signals": {
 
-        "forensic_score":
+        "ela_score":
             round(
-                forensic_score,
+                ela_score,
                 4
             ),
 
-
-        "signals": {
-
-            "ela_score":
-                round(
-                    ela_score,
-                    4
-                ),
-
-
-            "edge_density":
-                round(
-                    edge_result[
-                        "edge_density"
-                    ],
-                    4
-                ),
-
-
-            "wavelet_score":
-                round(
-                    wavelet_result[
-                        "wavelet_score"
-                    ],
-                    4
-                ),
-
-
-            "copy_move_score":
-                copy_move_result[
-                    "copy_move_score"
+        "edge_density":
+            round(
+                edge_result[
+                    "edge_density"
                 ],
+                4
+            ),
 
+        "wavelet_score":
+            round(
+                wavelet_result[
+                    "wavelet_score"
+                ],
+                4
+            ),
 
-            "copy_move_detected":
-                copy_move_result[
-                    "copy_move_detected"
-                ]
+        "copy_move_score":
+            copy_move_result.get(
+                "copy_move_score",
+                0.0
+            ),
 
+        "copy_move_detected":
+            copy_move_result.get(
+                "copy_move_detected",
+                False
+            )
+        
         },
 
 

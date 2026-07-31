@@ -59,6 +59,7 @@ easyocr
 # ==============================
 PyMuPDF
 pdf2image
+pymupdf
 
 # ==============================
 # VIDEO PROCESSING
@@ -83,3 +84,11 @@ reportlab
 # ==============================
 pytest
 pytest-asyncio
+
+# Model weights
+*.pt
+*.pth
+*.ckpt
+
+# Signature model weights
+backend/models/signature/weights/

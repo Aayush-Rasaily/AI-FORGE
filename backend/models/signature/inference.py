@@ -1,109 +1,124 @@
+from pathlib import Path
+
 import torch
-
 from PIL import Image
-
 from torchvision import transforms
 
-from backend.models.signature.model import (
-    SiameseNetwork
+from backend.models.signature.model import SiameseNetwork
+
+
+# ==========================================
+# Configuration
+# ==========================================
+
+MODEL_PATH = Path(
+    "backend/models/signature/weights/siamese_best.pt"
 )
 
 
-MODEL_PATH = (
-    "backend/models/signature/weights/"
-    "siamese_best.pt"
-)
-
-
-device = torch.device(
-
+DEVICE = torch.device(
     "cuda"
     if torch.cuda.is_available()
     else "cpu"
-
 )
 
 
-model = SiameseNetwork(
+# ==========================================
+# Image Transform
+# ==========================================
 
-    embedding_dim=256
+transform = transforms.Compose([
 
-)
+    transforms.Resize(
+        (224, 224)
+    ),
 
+    transforms.ToTensor(),
+
+    transforms.Normalize(
+
+        mean=[
+            0.485,
+            0.456,
+            0.406
+        ],
+
+        std=[
+            0.229,
+            0.224,
+            0.225
+        ]
+
+    )
+
+])
+
+
+# ==========================================
+# Load Model
+# ==========================================
 
 def load_model():
 
-    checkpoint = torch.load(
-
-        MODEL_PATH,
-
-        map_location=device
-
+    model = SiameseNetwork(
+        embedding_dim=256
     )
-
 
     model.load_state_dict(
-        checkpoint
-    )
 
+        torch.load(
 
-    model.to(
-        device
-    )
+            MODEL_PATH,
 
-
-    model.eval()
-
-
-def preprocess(
-    image_path
-):
-
-    transform = transforms.Compose([
-
-        transforms.Resize(
-            (224, 224)
-        ),
-
-        transforms.ToTensor(),
-
-        transforms.Normalize(
-
-            mean=[
-                0.485,
-                0.456,
-                0.406
-            ],
-
-            std=[
-                0.229,
-                0.224,
-                0.225
-            ]
+            map_location=DEVICE
 
         )
 
-    ])
+    )
 
+    model = model.to(
+        DEVICE
+    )
+
+    model.eval()
+
+    return model
+
+
+# ==========================================
+# Load Image
+# ==========================================
+
+def load_image(
+    image_path
+):
 
     image = Image.open(
 
         image_path
 
     ).convert(
-        "RGB"
-    )
 
+        "RGB"
+
+    )
 
     image = transform(
         image
     )
 
-
-    return image.unsqueeze(
+    image = image.unsqueeze(
         0
     )
 
+    return image.to(
+        DEVICE
+    )
+
+
+# ==========================================
+# Verify Signature
+# ==========================================
 
 def verify_signature(
 
@@ -113,54 +128,54 @@ def verify_signature(
 
 ):
 
-    load_model()
+    model = load_model()
 
 
-    reference = preprocess(
+    reference = load_image(
 
         reference_path
 
-    ).to(
-        device
     )
 
 
-    query = preprocess(
+    query = load_image(
 
         query_path
 
-    ).to(
-        device
     )
 
 
     with torch.no_grad():
 
-        emb1 = model.encoder(
+        embedding1, embedding2 = model(
 
-            reference
-
-        )
-
-
-        emb2 = model.encoder(
+            reference,
 
             query
 
         )
 
 
-        similarity = torch.cosine_similarity(
+        similarity = (
 
-            emb1,
+            torch.cosine_similarity(
 
-            emb2
+                embedding1,
 
-        ).item()
+                embedding2
+
+            )
+
+            .item()
+
+        )
 
 
-    # Threshold
-    threshold = 0.50
+    # ======================================
+    # Decision
+    # ======================================
+
+    threshold = 0.5
 
 
     if similarity >= threshold:
@@ -169,12 +184,15 @@ def verify_signature(
 
     else:
 
-        verdict = "Forged"
+        verdict = "Potential Forgery"
 
 
-    confidence = abs(
+    # Convert similarity to
+    # confidence-like score
 
-        similarity
+    confidence = (
+
+        abs(similarity)
 
     )
 

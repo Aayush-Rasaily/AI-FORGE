@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Trained model weights
+*.pth
+*.pt
+*.ckpt
+
+# Model weights directory
+backend/models/signature/weights/
