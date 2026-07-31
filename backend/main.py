@@ -2,8 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes import router
-
-
+from backend.api.signature_routes import (
+    router as signature_router
+)
+from backend.api.signature_routes import (
+    router as signature_router
+)
 app = FastAPI(
     title="AI-FORGE API",
     description="AI-Powered Multimodal Fraud Detection and Digital Forensics Platform",
@@ -28,7 +32,9 @@ app.include_router(
     router
 )
 
-
+app.include_router(
+    signature_router
+)
 @app.get("/")
 def root():
 

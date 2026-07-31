@@ -1,19 +1,18 @@
 from pathlib import Path
-from unittest import result
 
 from backend.analysis.image_forensics import (
-analyze_image
+    analyze_image
 )
 
 from backend.analysis.copy_move import (
-detect_copy_move
+    detect_copy_move
 )
+
 
 def analyze_image_unified(
     image_path,
     analysis_dir
-    ):
-
+):
 
     # -----------------------------------------
     # Convert paths
@@ -28,6 +27,16 @@ def analyze_image_unified(
     )
 
     # -----------------------------------------
+    # Validate image
+    # -----------------------------------------
+
+    if not image_path.exists():
+
+        raise FileNotFoundError(
+            f"Image not found: {image_path}"
+        )
+
+    # -----------------------------------------
     # Create analysis directory
     # -----------------------------------------
 
@@ -37,15 +46,16 @@ def analyze_image_unified(
     )
 
     # -----------------------------------------
-    # Run ELA / Edge / Wavelet Analysis
+    # Run ELA / Edge / Wavelet
     # -----------------------------------------
 
     forensic_result = analyze_image(
-        str(image_path)
+        str(image_path),
+        str(analysis_dir)
     )
 
     # -----------------------------------------
-    # Run Copy-Move Detection
+    # Run Copy-Move
     # -----------------------------------------
 
     copy_move_result = detect_copy_move(
@@ -54,7 +64,7 @@ def analyze_image_unified(
     )
 
     # -----------------------------------------
-    # Safety check
+    # Safety checks
     # -----------------------------------------
 
     if not isinstance(
@@ -85,7 +95,7 @@ def analyze_image_unified(
         forensic_signals = {}
 
     # -----------------------------------------
-    # Extract ELA score
+    # Extract signals
     # -----------------------------------------
 
     ela_score = float(
@@ -95,10 +105,6 @@ def analyze_image_unified(
         )
     )
 
-    # -----------------------------------------
-    # Extract Edge Density
-    # -----------------------------------------
-
     edge_density = float(
         forensic_signals.get(
             "edge_density",
@@ -106,28 +112,12 @@ def analyze_image_unified(
         )
     )
 
-    # -----------------------------------------
-    # Extract Wavelet Score
-    # -----------------------------------------
-
     wavelet_score = float(
         forensic_signals.get(
             "wavelet_score",
             0.0
         )
     )
-
-    # -----------------------------------------
-    # Extract Copy-Move Score
-    #
-    # Supports both:
-    #
-    # "copy_move_score"
-    #
-    # and older:
-    #
-    # "score"
-    # -----------------------------------------
 
     copy_move_score = float(
         copy_move_result.get(
@@ -139,10 +129,6 @@ def analyze_image_unified(
         )
     )
 
-    # -----------------------------------------
-    # Extract Copy-Move Detection Status
-    # -----------------------------------------
-
     copy_move_detected = bool(
         copy_move_result.get(
             "copy_move_detected",
@@ -153,10 +139,6 @@ def analyze_image_unified(
         )
     )
 
-    # -----------------------------------------
-    # Extract Matched Points
-    # -----------------------------------------
-
     matched_points = int(
         copy_move_result.get(
             "matched_points",
@@ -166,10 +148,6 @@ def analyze_image_unified(
             )
         )
     )
-
-    # -----------------------------------------
-    # Extract RANSAC Inliers
-    # -----------------------------------------
 
     ransac_inliers = int(
         copy_move_result.get(
@@ -186,80 +164,63 @@ def analyze_image_unified(
     # -----------------------------------------
 
     signals = {
-        "ela_score": forensic_signals.get(
-            "ela_score",
-            0
-        ),
 
-        "edge_density": forensic_signals.get(
-            "edge_density",
-            0
-        ),
+        "ela_score":
+            round(
+                ela_score,
+                4
+            ),
 
-        "wavelet_score": forensic_signals.get(
-            "wavelet_score",
-            0
-        ),
+        "edge_density":
+            round(
+                edge_density,
+                4
+            ),
 
-        "copy_move_score": copy_move_result.get(
-            "copy_move_score",
-            copy_move_result.get(
-                "score",
-                0
-            )
-        ),
+        "wavelet_score":
+            round(
+                wavelet_score,
+                4
+            ),
 
-        "copy_move_detected": copy_move_result.get(
-            "copy_move_detected",
-            False
-        ),
+        "copy_move_score":
+            round(
+                copy_move_score,
+                4
+            ),
 
-        "matched_points": copy_move_result.get(
-            "matched_points",
-            0
-        ),
+        "copy_move_detected":
+            copy_move_detected,
 
-        "ransac_inliers": copy_move_result.get(
-            "inliers",
-            0
-        )
+        "matched_points":
+            matched_points,
+
+        "ransac_inliers":
+            ransac_inliers
+
     }
 
-    
-
     # -----------------------------------------
-    # Calculate Unified Forensic Score
-    #
-    # Currently using:
-    #
-    # ELA
-    # Wavelet
-    # Copy-Move
-    #
-    # Edge density is reported as a signal
-    # but is not currently included in the
-    # overall score.
+    # Unified Forensic Score
     # -----------------------------------------
 
     forensic_score = (
 
-        signals[
-            "ela_score"
-        ]
+        0.30 * ela_score
 
         +
 
-        signals[
-            "wavelet_score"
-        ]
+        0.20 * wavelet_score
 
         +
 
-        signals[
-            "copy_move_score"
-        ]
+        0.20 * edge_density
 
-    ) / 3
+        +
+
+        0.30 * copy_move_score
+
+    )
 
     forensic_score = round(
         float(
@@ -269,25 +230,25 @@ def analyze_image_unified(
     )
 
     # -----------------------------------------
-    # Determine Final Verdict
+    # Determine Verdict
     # -----------------------------------------
 
-    if (
-        signals[
-            "copy_move_detected"
-        ]
-    ):
+    if copy_move_detected:
 
         verdict = (
             "Potential Forgery"
         )
 
-    elif (
-        forensic_score >= 0.5
-    ):
+    elif forensic_score >= 0.60:
 
         verdict = (
-            "Potential Forgery"
+            "Likely Forged"
+        )
+
+    elif forensic_score >= 0.30:
+
+        verdict = (
+            "Suspicious"
         )
 
     else:
@@ -329,7 +290,7 @@ def analyze_image_unified(
     }
 
     # -----------------------------------------
-    # Final Unified Result
+    # Final Result
     # -----------------------------------------
 
     result = {
@@ -349,7 +310,7 @@ def analyze_image_unified(
     }
 
     # -----------------------------------------
-    # Debug Output
+    # Debug
     # -----------------------------------------
 
     print(
@@ -359,6 +320,11 @@ def analyze_image_unified(
     print(
         "Image:",
         image_path
+    )
+
+    print(
+        "Analysis Directory:",
+        analysis_dir
     )
 
     print(
@@ -372,21 +338,17 @@ def analyze_image_unified(
     )
 
     print(
-        "Copy-Move Result:",
-        copy_move_result
+        "Signals:",
+        signals
     )
 
     print(
-        "Final Signals:",
-        signals
+        "Artifacts:",
+        artifacts
     )
 
     print(
         "============================================\n"
     )
-
-# -----------------------------------------
-# Return Final Result
-# -----------------------------------------
 
     return result

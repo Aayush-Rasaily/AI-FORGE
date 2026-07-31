@@ -1,4 +1,4 @@
-import os
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -8,23 +8,37 @@ from fastapi import (
     File,
     HTTPException
 )
+
+from fastapi.responses import FileResponse
+
 from backend.core.evidence_manager import (
     generate_evidence_id
 )
+
+from backend.ingestion.file_router import (
+    identify_file_type
+)
+
 from backend.analysis.unified_image_analysis import (
     analyze_image_unified
 )
-from fastapi.responses import FileResponse
 
-from backend.ingestion.file_router import identify_file_type
-from backend.analysis.image_forensics import analyze_image
 from backend.analysis.document_forensics import (
     analyze_document
 )
-from backend.agents.signature_agent import (
+
+from backend.models.signature.inference import (
     verify_signature
 )
-from backend.analysis.copy_move import detect_copy_move
+
+from backend.analysis.copy_move import (
+    detect_copy_move
+)
+
+
+# ============================================================
+# ROUTER
+# ============================================================
 
 router = APIRouter(
     prefix="/api",
@@ -32,8 +46,13 @@ router = APIRouter(
 )
 
 
-# Directory where uploaded evidence is stored
-UPLOAD_DIR = Path("data/temp/uploads")
+# ============================================================
+# DIRECTORIES
+# ============================================================
+
+UPLOAD_DIR = Path(
+    "data/temp/uploads"
+)
 
 UPLOAD_DIR.mkdir(
     parents=True,
@@ -41,60 +60,157 @@ UPLOAD_DIR.mkdir(
 )
 
 
-# Maximum file size: 100 MB
-MAX_FILE_SIZE = 100 * 1024 * 1024
+# Maximum upload size: 100 MB
+
+MAX_FILE_SIZE = (
+    100 *
+    1024 *
+    1024
+)
 
 
-@router.post("/evidence/upload")
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def find_evidence_file(
+    evidence_id: str
+):
+    """
+    Find the uploaded evidence file
+    using its generated evidence ID.
+    """
+
+    files = list(
+        UPLOAD_DIR.glob(
+            f"{evidence_id}.*"
+        )
+    )
+
+    if not files:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Evidence not found"
+        )
+
+    return files[0]
+
+
+def get_analysis_dir(
+    evidence_id: str
+):
+    """
+    Return the dedicated analysis directory
+    for a specific evidence item.
+    """
+
+    analysis_dir = (
+
+        UPLOAD_DIR /
+
+        "analysis" /
+
+        evidence_id
+
+    )
+
+    analysis_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    return analysis_dir
+
+
+# ============================================================
+# 1. UPLOAD EVIDENCE
+# ============================================================
+
+@router.post(
+    "/evidence/upload"
+)
 async def upload_evidence(
     file: UploadFile = File(...)
 ):
 
-    # Check filename
+    # -----------------------------------------
+    # Validate filename
+    # -----------------------------------------
+
     if not file.filename:
+
         raise HTTPException(
             status_code=400,
             detail="No filename provided"
         )
 
 
+    # -----------------------------------------
     # Identify file type
+    # -----------------------------------------
+
     file_type = identify_file_type(
         file.filename
     )
 
 
+    # -----------------------------------------
     # Reject unsupported files
+    # -----------------------------------------
+
     if file_type == "unsupported":
+
         raise HTTPException(
             status_code=400,
             detail="Unsupported file type"
         )
 
 
-    # Generate unique evidence ID
-    evidence_id = generate_evidence_id()
+    # -----------------------------------------
+    # Generate evidence ID
+    # -----------------------------------------
+
+    evidence_id = (
+        generate_evidence_id()
+    )
 
 
+    # -----------------------------------------
     # Preserve original extension
+    # -----------------------------------------
+
     extension = Path(
         file.filename
     ).suffix.lower()
 
 
+    # -----------------------------------------
     # Create unique filename
+    # -----------------------------------------
+
     saved_filename = (
-        f"{evidence_id}{extension}"
+
+        f"{evidence_id}"
+
+        f"{extension}"
+
     )
 
 
     file_path = (
+
         UPLOAD_DIR /
+
         saved_filename
+
     )
 
 
+    # -----------------------------------------
     # Save uploaded file
+    # -----------------------------------------
+
     total_size = 0
 
     try:
@@ -111,23 +227,40 @@ async def upload_evidence(
                 )
 
                 if not chunk:
+
                     break
 
-                total_size += len(chunk)
+
+                total_size += len(
+                    chunk
+                )
 
 
-                # Prevent oversized uploads
-                if total_size > MAX_FILE_SIZE:
+                # -----------------------------------------
+                # Check maximum file size
+                # -----------------------------------------
 
-                    buffer.close()
+                if (
+
+                    total_size >
+
+                    MAX_FILE_SIZE
+
+                ):
 
                     file_path.unlink(
                         missing_ok=True
                     )
 
                     raise HTTPException(
+
                         status_code=413,
-                        detail="File exceeds 100 MB limit"
+
+                        detail=(
+                            "File exceeds "
+                            "100 MB limit"
+                        )
+
                     )
 
 
@@ -137,7 +270,9 @@ async def upload_evidence(
 
 
     except HTTPException:
+
         raise
+
 
     except Exception as e:
 
@@ -146,26 +281,166 @@ async def upload_evidence(
         )
 
         raise HTTPException(
+
             status_code=500,
-            detail=f"Failed to save file: {str(e)}"
+
+            detail=(
+
+                "Failed to save file: "
+
+                f"{str(e)}"
+
+            )
+
         )
 
 
+    # -----------------------------------------
+    # Return upload result
+    # -----------------------------------------
+
     return {
-        "success": True,
-        "evidence_id": evidence_id,
-        "original_filename": file.filename,
-        "file_type": file_type,
-        "file_size": total_size,
-        "stored_filename": saved_filename,
-        "message": "Evidence uploaded successfully"
+
+        "success":
+            True,
+
+        "evidence_id":
+            evidence_id,
+
+        "original_filename":
+            file.filename,
+
+        "file_type":
+            file_type,
+
+        "file_size":
+            total_size,
+
+        "stored_filename":
+            saved_filename,
+
+        "message":
+            "Evidence uploaded successfully"
+
     }
-@router.post("/evidence/analyze-image/{evidence_id}")
+
+
+# ============================================================
+# 2. UNIFIED IMAGE ANALYSIS
+# ============================================================
+
+@router.post(
+    "/evidence/analyze-image/{evidence_id}"
+)
 async def analyze_uploaded_image(
     evidence_id: str
 ):
 
-    # Search for uploaded image
+    # -----------------------------------------
+    # Find uploaded evidence
+    # -----------------------------------------
+
+    image_path = find_evidence_file(
+        evidence_id
+    )
+
+
+    # -----------------------------------------
+    # Get dedicated analysis directory
+    # -----------------------------------------
+
+    analysis_dir = get_analysis_dir(
+        evidence_id
+    )
+
+
+    # -----------------------------------------
+    # Run unified analysis
+    # -----------------------------------------
+
+    try:
+
+        result = analyze_image_unified(
+
+            image_path,
+
+            analysis_dir
+
+        )
+
+
+        return {
+
+            "success":
+                True,
+
+            "evidence_id":
+                evidence_id,
+
+            "analysis":
+                result
+
+        }
+
+
+    except Exception as e:
+
+        print(
+            "\n========== IMAGE ANALYSIS ERROR =========="
+        )
+
+        print(
+            "Evidence ID:",
+            evidence_id
+        )
+
+        print(
+            "Image:",
+            image_path
+        )
+
+        print(
+            "Error:",
+            repr(e)
+        )
+
+        print(
+            "===========================================\n"
+        )
+
+
+        raise HTTPException(
+
+            status_code=500,
+
+            detail=str(e)
+
+        )
+
+
+# ============================================================
+# 3. UNIFIED ANALYSIS ALIAS
+# ============================================================
+#
+# This keeps your existing frontend/API calls working:
+#
+# POST /api/evidence/analyze/{evidence_id}
+#
+# Both endpoints now run the SAME unified pipeline.
+#
+# ============================================================
+
+@router.post(
+    "/evidence/analyze/{evidence_id}"
+)
+async def analyze_evidence(
+    evidence_id: str
+):
+
+    # -----------------------------------------
+    # Find uploaded evidence
+    # -----------------------------------------
+
     image_files = list(
         UPLOAD_DIR.glob(
             f"{evidence_id}.*"
@@ -173,6 +448,7 @@ async def analyze_uploaded_image(
     )
 
     if not image_files:
+
         raise HTTPException(
             status_code=404,
             detail="Evidence not found"
@@ -180,26 +456,31 @@ async def analyze_uploaded_image(
 
     image_path = image_files[0]
 
-    # Run forensic analysis
+    # -----------------------------------------
+    # Analysis directory
+    # -----------------------------------------
+
+    analysis_dir = (
+        UPLOAD_DIR /
+        "analysis" /
+        evidence_id
+    )
+
+    analysis_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    # -----------------------------------------
+    # Run unified analysis
+    # -----------------------------------------
+
     try:
 
-        result = analyze_image(
-            str(image_path)
+        result = analyze_image_unified(
+            image_path,
+            analysis_dir
         )
-
-        # Add API URLs for generated artifacts
-        if "artifacts" in result:
-
-            result["artifacts"] = {
-                "ela":
-                    f"/api/evidence/artifacts/{evidence_id}/ela",
-
-                "edges":
-                    f"/api/evidence/artifacts/{evidence_id}/edges",
-
-                "wavelet":
-                    f"/api/evidence/artifacts/{evidence_id}/wavelet"
-            }
 
         return {
 
@@ -215,10 +496,21 @@ async def analyze_uploaded_image(
 
     except Exception as e:
 
+        print(
+            "Unified image analysis failed:",
+            repr(e)
+        )
+
         raise HTTPException(
             status_code=500,
             detail=str(e)
         )
+
+
+# ============================================================
+# 4. GET FORENSIC ARTIFACT
+# ============================================================
+
 @router.get(
     "/evidence/artifacts/{evidence_id}/{artifact_type}"
 )
@@ -227,7 +519,10 @@ async def get_evidence_artifact(
     artifact_type: str
 ):
 
+    # =========================================
     # Find uploaded evidence
+    # =========================================
+
     image_files = list(
         UPLOAD_DIR.glob(
             f"{evidence_id}.*"
@@ -241,18 +536,31 @@ async def get_evidence_artifact(
             detail="Evidence not found"
         )
 
-
     image_path = image_files[0]
 
+    # =========================================
+    # Analysis Directory
+    # =========================================
 
-    # Artifact directory
     analysis_dir = (
-        image_path.parent /
-        "analysis"
+
+        UPLOAD_DIR /
+
+        "analysis" /
+
+        evidence_id
+
     )
 
+    analysis_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
 
-    # Supported artifact types
+    # =========================================
+    # Artifact Map
+    # =========================================
+
     artifact_map = {
 
         "ela":
@@ -273,53 +581,97 @@ async def get_evidence_artifact(
 
     }
 
+    # =========================================
+    # Validate Artifact Type
+    # =========================================
 
-    # Check artifact type
     if artifact_type not in artifact_map:
 
         raise HTTPException(
-
             status_code=400,
-
             detail=(
-
                 "Invalid artifact type. "
-
                 "Use ela, edges, wavelet, or copy_move."
-
             )
-
         )
 
-
-    # Get requested artifact
     artifact_path = artifact_map[
         artifact_type
     ]
 
+    # =========================================
+    # Generate Missing Artifact
+    # =========================================
 
-    # Check artifact exists
+    if not artifact_path.exists():
+
+        try:
+
+            # Run unified analysis
+            # This guarantees all artifacts
+            # are generated in the same directory.
+
+            analyze_image_unified(
+
+                image_path,
+
+                analysis_dir
+
+            )
+
+        except Exception as e:
+
+            print(
+                "Artifact generation failed:",
+                repr(e)
+            )
+
+            raise HTTPException(
+
+                status_code=500,
+
+                detail=(
+                    "Artifact generation failed: "
+                    f"{str(e)}"
+                )
+
+            )
+
+    # =========================================
+    # Check Artifact Again
+    # =========================================
+
     if not artifact_path.exists():
 
         raise HTTPException(
 
             status_code=404,
 
-            detail="Artifact not found"
+            detail=(
+                f"Artifact not found: "
+                f"{artifact_path}"
+            )
 
         )
 
+    # =========================================
+    # Return Artifact
+    # =========================================
 
-    # Return artifact image
     return FileResponse(
 
-        path=artifact_path,
+        path=str(
+            artifact_path
+        ),
 
         media_type="image/jpeg"
 
     )
-    
-#analyze document    
+
+# ============================================================
+# 5. DOCUMENT ANALYSIS
+# ============================================================
+
 @router.post(
     "/evidence/analyze-document/{evidence_id}"
 )
@@ -327,10 +679,16 @@ async def analyze_uploaded_document(
     evidence_id: str
 ):
 
+    # -----------------------------------------
+    # Find PDF document
+    # -----------------------------------------
+
     document_files = list(
 
         UPLOAD_DIR.glob(
+
             f"{evidence_id}.pdf"
+
         )
 
     )
@@ -351,6 +709,10 @@ async def analyze_uploaded_document(
         document_files[0]
     )
 
+
+    # -----------------------------------------
+    # Run document analysis
+    # -----------------------------------------
 
     try:
 
@@ -384,12 +746,16 @@ async def analyze_uploaded_document(
             detail=str(e)
 
         )
-        
-#verify signature
+
+
+# ============================================================
+# 6. SIGNATURE VERIFICATION
+# ============================================================
+
 @router.post(
     "/evidence/verify-signature"
 )
-async def verify_uploaded_signature(
+async def verify_signature_endpoint(
 
     reference: UploadFile = File(...),
 
@@ -397,74 +763,144 @@ async def verify_uploaded_signature(
 
 ):
 
-    signature_dir = (
-        Path("data/temp/signatures")
-    )
-
-    signature_dir.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-
-    reference_path = (
-        signature_dir /
-        f"reference_{uuid.uuid4()}.png"
-    )
-
-
-    query_path = (
-        signature_dir /
-        f"query_{uuid.uuid4()}.png"
-    )
-
-
     try:
 
-        # Save reference signature
+        # -----------------------------------------
+        # Validate files
+        # -----------------------------------------
 
-        with open(
-            reference_path,
-            "wb"
-        ) as buffer:
+        if not reference.filename:
 
-            buffer.write(
-                await reference.read()
+            raise HTTPException(
+
+                status_code=400,
+
+                detail=(
+                    "Reference signature "
+                    "is required"
+                )
+
             )
 
 
-        # Save query signature
+        if not query.filename:
 
-        with open(
-            query_path,
-            "wb"
-        ) as buffer:
+            raise HTTPException(
 
-            buffer.write(
-                await query.read()
+                status_code=400,
+
+                detail=(
+                    "Query signature "
+                    "is required"
+                )
+
             )
 
 
-        # Verify signature
+        # -----------------------------------------
+        # Temporary directory
+        # -----------------------------------------
 
-        result = verify_signature(
+        with tempfile.TemporaryDirectory() as temp_dir:
 
-            str(reference_path),
-
-            str(query_path)
-
-        )
+            temp_path = Path(
+                temp_dir
+            )
 
 
-        return {
+            reference_ext = Path(
+                reference.filename
+            ).suffix.lower()
 
-            "success":
-                True,
 
-            "analysis":
-                result
+            query_ext = Path(
+                query.filename
+            ).suffix.lower()
 
-        }
+
+            reference_path = (
+
+                temp_path /
+
+                f"reference{reference_ext}"
+
+            )
+
+
+            query_path = (
+
+                temp_path /
+
+                f"query{query_ext}"
+
+            )
+
+
+            # -----------------------------------------
+            # Save reference signature
+            # -----------------------------------------
+
+            with open(
+
+                reference_path,
+
+                "wb"
+
+            ) as buffer:
+
+                buffer.write(
+
+                    await reference.read()
+
+                )
+
+
+            # -----------------------------------------
+            # Save query signature
+            # -----------------------------------------
+
+            with open(
+
+                query_path,
+
+                "wb"
+
+            ) as buffer:
+
+                buffer.write(
+
+                    await query.read()
+
+                )
+
+
+            # -----------------------------------------
+            # Run signature verification
+            # -----------------------------------------
+
+            result = verify_signature(
+
+                str(reference_path),
+
+                str(query_path)
+
+            )
+
+
+            return {
+
+                "success":
+                    True,
+
+                "analysis":
+                    result
+
+            }
+
+
+    except HTTPException:
+
+        raise
 
 
     except Exception as e:
@@ -473,90 +909,152 @@ async def verify_uploaded_signature(
 
             status_code=500,
 
-            detail=str(e)
+            detail=(
+
+                "Signature verification "
+                "failed: "
+
+                f"{str(e)}"
+
+            )
 
         )
 
-# ==========================================
-# Signature Verification
-# ==========================================
 
-@router.post("/signature/verify")
+# ============================================================
+# 7. SIGNATURE VERIFICATION ALIAS
+# ============================================================
+#
+# Keeps your existing frontend call:
+#
+# POST /api/signature/verify
+#
+# ============================================================
+
+@router.post(
+    "/signature/verify"
+)
 async def verify_signature_api(
+
     reference: UploadFile = File(...),
+
     query: UploadFile = File(...)
+
 ):
 
-    # --------------------------------------
-    # Allowed image formats
-    # --------------------------------------
-
     allowed_extensions = {
+
         ".png",
+
         ".jpg",
+
         ".jpeg"
+
     }
 
+
+    # -----------------------------------------
+    # Validate filenames
+    # -----------------------------------------
+
+    if not reference.filename:
+
+        raise HTTPException(
+
+            status_code=400,
+
+            detail=(
+                "Reference signature "
+                "is required"
+            )
+
+        )
+
+
+    if not query.filename:
+
+        raise HTTPException(
+
+            status_code=400,
+
+            detail=(
+                "Query signature "
+                "is required"
+            )
+
+        )
+
+
+    # -----------------------------------------
+    # Validate extensions
+    # -----------------------------------------
+
     reference_ext = Path(
+
         reference.filename
+
     ).suffix.lower()
+
 
     query_ext = Path(
+
         query.filename
+
     ).suffix.lower()
 
-
-    # --------------------------------------
-    # Validate reference signature
-    # --------------------------------------
 
     if reference_ext not in allowed_extensions:
 
         raise HTTPException(
+
             status_code=400,
+
             detail=(
                 "Reference signature must be "
                 "PNG, JPG, or JPEG"
             )
+
         )
 
-
-    # --------------------------------------
-    # Validate query signature
-    # --------------------------------------
 
     if query_ext not in allowed_extensions:
 
         raise HTTPException(
+
             status_code=400,
+
             detail=(
                 "Query signature must be "
                 "PNG, JPG, or JPEG"
             )
+
         )
 
 
-    # --------------------------------------
-    # Create temporary directory
-    # --------------------------------------
+    # -----------------------------------------
+    # Temporary directory
+    # -----------------------------------------
 
     signature_dir = Path(
+
         "data/temp/signatures"
+
     )
+
 
     signature_dir.mkdir(
+
         parents=True,
+
         exist_ok=True
+
     )
 
-
-    # --------------------------------------
-    # Generate unique filenames
-    # --------------------------------------
 
     reference_id = str(
         uuid.uuid4()
     )
+
 
     query_id = str(
         uuid.uuid4()
@@ -564,67 +1062,92 @@ async def verify_signature_api(
 
 
     reference_path = (
-        signature_dir
-        / f"{reference_id}{reference_ext}"
+
+        signature_dir /
+
+        f"{reference_id}"
+        f"{reference_ext}"
+
     )
 
+
     query_path = (
-        signature_dir
-        / f"{query_id}{query_ext}"
+
+        signature_dir /
+
+        f"{query_id}"
+        f"{query_ext}"
+
     )
 
 
     try:
 
-        # ==================================
-        # Save reference signature
-        # ==================================
+        # -----------------------------------------
+        # Save reference
+        # -----------------------------------------
 
         with open(
+
             reference_path,
+
             "wb"
+
         ) as buffer:
 
             while True:
 
                 chunk = await reference.read(
+
                     1024 * 1024
+
                 )
 
+
                 if not chunk:
+
                     break
+
 
                 buffer.write(
                     chunk
                 )
 
 
-        # ==================================
-        # Save query signature
-        # ==================================
+        # -----------------------------------------
+        # Save query
+        # -----------------------------------------
 
         with open(
+
             query_path,
+
             "wb"
+
         ) as buffer:
 
             while True:
 
                 chunk = await query.read(
+
                     1024 * 1024
+
                 )
 
+
                 if not chunk:
+
                     break
+
 
                 buffer.write(
                     chunk
                 )
 
 
-        # ==================================
-        # Run Siamese Network
-        # ==================================
+        # -----------------------------------------
+        # Run model
+        # -----------------------------------------
 
         result = verify_signature(
 
@@ -635,13 +1158,14 @@ async def verify_signature_api(
         )
 
 
-        # ==================================
+        # -----------------------------------------
         # Return result
-        # ==================================
+        # -----------------------------------------
 
         return {
 
-            "success": True,
+            "success":
+                True,
 
             "analysis": {
 
@@ -666,8 +1190,12 @@ async def verify_signature_api(
             status_code=500,
 
             detail=(
+
                 "Signature verification "
-                f"failed: {str(e)}"
+                "failed: "
+
+                f"{str(e)}"
+
             )
 
         )
@@ -675,9 +1203,9 @@ async def verify_signature_api(
 
     finally:
 
-        # ==================================
-        # Delete temporary files
-        # ==================================
+        # -----------------------------------------
+        # Cleanup
+        # -----------------------------------------
 
         reference_path.unlink(
             missing_ok=True
@@ -686,68 +1214,47 @@ async def verify_signature_api(
         query_path.unlink(
             missing_ok=True
         )
-        
+
+
+# ============================================================
+# 8. COPY-MOVE ANALYSIS
+# ============================================================
+
 @router.post(
-    "/evidence/analyze-copy-move/{evidence_id}"
+    "/evidence/analyze-copy-move/"
+    "{evidence_id}"
 )
-async def analyze_copy_move(
+async def analyze_copy_move_endpoint(
+
     evidence_id: str
+
 ):
 
-    # --------------------------------
-    # Find uploaded evidence
-    # --------------------------------
+    # -----------------------------------------
+    # Find evidence
+    # -----------------------------------------
 
-    image_files = list(
+    image_path = find_evidence_file(
 
-        UPLOAD_DIR.glob(
-
-            f"{evidence_id}.*"
-
-        )
+        evidence_id
 
     )
 
 
-    if not image_files:
+    # -----------------------------------------
+    # Get dedicated analysis directory
+    # -----------------------------------------
 
-        raise HTTPException(
+    analysis_dir = get_analysis_dir(
 
-            status_code=404,
-
-            detail="Evidence not found"
-
-        )
-
-
-    image_path = image_files[0]
-
-
-    # --------------------------------
-    # Analysis directory
-    # --------------------------------
-
-    analysis_dir = (
-
-        image_path.parent /
-
-        "analysis"
+        evidence_id
 
     )
 
 
-    analysis_dir.mkdir(
-
-        parents=True,
-
-        exist_ok=True
-
-    )
-
-
-    # --------------------------------
+    # -----------------------------------------
     # Run Copy-Move Detection
-    # --------------------------------
+    # -----------------------------------------
 
     try:
 
@@ -762,112 +1269,13 @@ async def analyze_copy_move(
 
         return {
 
-            "success": True,
-
-            "evidence_id":
-                evidence_id,
-
-            "analysis":
-                result
-
-        }
-
-
-    except Exception as e:
-
-        raise HTTPException(
-
-            status_code=500,
-
-            detail=str(e)
-
-        )
-
-#unified_image_analysis       
-@router.post(
-    "/evidence/analyze/{evidence_id}"
-)
-async def analyze_evidence(
-    evidence_id: str
-):
-
-    # -----------------------------------------
-    # Find uploaded evidence
-    # -----------------------------------------
-
-    image_files = list(
-
-        UPLOAD_DIR.glob(
-
-            f"{evidence_id}.*"
-
-        )
-
-    )
-
-
-    if not image_files:
-
-        raise HTTPException(
-
-            status_code=404,
-
-            detail="Evidence not found"
-
-        )
-
-
-    image_path = (
-
-        image_files[0]
-
-    )
-
-
-    # -----------------------------------------
-    # Analysis directory
-    # -----------------------------------------
-
-    analysis_dir = (
-
-        UPLOAD_DIR /
-
-        "analysis"
-
-    )
-
-
-    # -----------------------------------------
-    # Run unified analysis
-    # -----------------------------------------
-
-    try:
-
-        result = (
-
-            analyze_image_unified(
-
-                image_path,
-
-                analysis_dir
-
-            )
-
-        )
-
-
-        return {
-
             "success":
-
                 True,
 
             "evidence_id":
-
                 evidence_id,
 
             "analysis":
-
                 result
 
         }

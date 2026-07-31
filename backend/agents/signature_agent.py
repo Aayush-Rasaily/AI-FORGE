@@ -1,5 +1,9 @@
 from pathlib import Path
 
+from backend.models.signature.inference import (
+    verify_signature as siamese_verify_signature
+)
+
 
 def verify_signature(
     reference_path: str,
@@ -15,12 +19,20 @@ def verify_signature(
     )
 
 
+    # --------------------------------
+    # Validate reference signature
+    # --------------------------------
+
     if not reference_path.exists():
 
         raise FileNotFoundError(
             "Reference signature not found"
         )
 
+
+    # --------------------------------
+    # Validate query signature
+    # --------------------------------
 
     if not query_path.exists():
 
@@ -29,21 +41,32 @@ def verify_signature(
         )
 
 
-    # TODO:
-    # Load trained Siamese Network
-    # Generate embeddings
-    # Calculate similarity
+    # --------------------------------
+    # Run Siamese Network
+    # --------------------------------
 
+    result = siamese_verify_signature(
+
+        str(reference_path),
+
+        str(query_path)
+
+    )
+
+
+    # --------------------------------
+    # Return result
+    # --------------------------------
 
     return {
 
         "verdict":
-            "Not Implemented",
+            result["verdict"],
 
         "similarity":
-            0.0,
+            result["similarity"],
 
         "confidence":
-            0.0
+            result["confidence"]
 
     }
