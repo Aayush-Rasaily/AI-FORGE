@@ -69,3 +69,5 @@ Thumbs.db
 *.pth
 # Ignore all temporary uploaded files
 data/temp/uploads/
+
+backend/models/video/weights/
