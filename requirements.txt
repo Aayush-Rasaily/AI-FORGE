@@ -53,6 +53,7 @@ PyWavelets
 # OCR
 # ==============================
 easyocr
+opencv-python
 
 # ==============================
 # PDF PROCESSING
