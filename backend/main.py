@@ -13,6 +13,13 @@ app = FastAPI(
     description="AI-Powered Multimodal Fraud Detection and Digital Forensics Platform",
     version="1.0.0"
 )
+from fastapi.staticfiles import StaticFiles
+
+app.mount(
+    "/data",
+    StaticFiles(directory="data"),
+    name="data",
+)
 
 
 # React frontend access

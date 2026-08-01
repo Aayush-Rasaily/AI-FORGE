@@ -519,9 +519,9 @@ async def get_evidence_artifact(
     artifact_type: str
 ):
 
-    # =========================================
+    # -----------------------------------------
     # Find uploaded evidence
-    # =========================================
+    # -----------------------------------------
 
     image_files = list(
         UPLOAD_DIR.glob(
@@ -538,28 +538,19 @@ async def get_evidence_artifact(
 
     image_path = image_files[0]
 
-    # =========================================
-    # Analysis Directory
-    # =========================================
+    # -----------------------------------------
+    # Analysis directory
+    # -----------------------------------------
 
     analysis_dir = (
-
         UPLOAD_DIR /
-
         "analysis" /
-
         evidence_id
-
     )
 
-    analysis_dir.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    # =========================================
-    # Artifact Map
-    # =========================================
+    # -----------------------------------------
+    # Artifact paths
+    # -----------------------------------------
 
     artifact_map = {
 
@@ -581,9 +572,9 @@ async def get_evidence_artifact(
 
     }
 
-    # =========================================
-    # Validate Artifact Type
-    # =========================================
+    # -----------------------------------------
+    # Validate artifact type
+    # -----------------------------------------
 
     if artifact_type not in artifact_map:
 
@@ -599,73 +590,53 @@ async def get_evidence_artifact(
         artifact_type
     ]
 
-    # =========================================
-    # Generate Missing Artifact
-    # =========================================
+    # -----------------------------------------
+    # Generate Copy-Move if missing
+    # -----------------------------------------
 
-    if not artifact_path.exists():
+    if (
+        artifact_type == "copy_move"
+        and
+        not artifact_path.exists()
+    ):
 
         try:
 
-            # Run unified analysis
-            # This guarantees all artifacts
-            # are generated in the same directory.
-
-            analyze_image_unified(
-
-                image_path,
-
-                analysis_dir
-
+            detect_copy_move(
+                str(image_path),
+                output_dir=analysis_dir
             )
 
         except Exception as e:
 
-            print(
-                "Artifact generation failed:",
-                repr(e)
-            )
-
             raise HTTPException(
-
                 status_code=500,
-
                 detail=(
-                    "Artifact generation failed: "
+                    "Copy-move artifact generation failed: "
                     f"{str(e)}"
                 )
-
             )
 
-    # =========================================
-    # Check Artifact Again
-    # =========================================
+    # -----------------------------------------
+    # Check artifact
+    # -----------------------------------------
 
     if not artifact_path.exists():
 
         raise HTTPException(
-
             status_code=404,
-
             detail=(
-                f"Artifact not found: "
-                f"{artifact_path}"
+                f"Artifact not found: {artifact_path}"
             )
-
         )
 
-    # =========================================
-    # Return Artifact
-    # =========================================
+    # -----------------------------------------
+    # Return artifact
+    # -----------------------------------------
 
     return FileResponse(
-
-        path=str(
-            artifact_path
-        ),
-
+        path=str(artifact_path),
         media_type="image/jpeg"
-
     )
 
 # ============================================================
@@ -679,20 +650,13 @@ async def analyze_uploaded_document(
     evidence_id: str
 ):
 
-    # -----------------------------------------
-    # Find PDF document
-    # -----------------------------------------
-
     document_files = list(
 
         UPLOAD_DIR.glob(
-
             f"{evidence_id}.pdf"
-
         )
 
     )
-
 
     if not document_files:
 
@@ -704,15 +668,7 @@ async def analyze_uploaded_document(
 
         )
 
-
-    document_path = (
-        document_files[0]
-    )
-
-
-    # -----------------------------------------
-    # Run document analysis
-    # -----------------------------------------
+    document_path = document_files[0]
 
     try:
 
@@ -722,11 +678,9 @@ async def analyze_uploaded_document(
 
         )
 
-
         return {
 
-            "success":
-                True,
+            "success": True,
 
             "evidence_id":
                 evidence_id,
@@ -735,7 +689,6 @@ async def analyze_uploaded_document(
                 result
 
         }
-
 
     except Exception as e:
 
