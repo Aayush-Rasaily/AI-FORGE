@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
+from backend.api.video_routes import router as video_router
 from backend.api.routes import router
 from backend.api.signature_routes import (
     router as signature_router
@@ -33,6 +33,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(
+    video_router
+)
 
 # Register API routes
 app.include_router(
