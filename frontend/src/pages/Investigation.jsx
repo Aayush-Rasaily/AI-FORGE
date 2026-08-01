@@ -1,210 +1,376 @@
 import { useState } from "react";
 
 import AnalysisSelector
-  from "../components/AnalysisSelector";
+    from "../components/AnalysisSelector";
 
 import EvidenceUploader
-  from "../components/EvidenceUploader";
+    from "../components/EvidenceUploader";
 
 import ImageForensics
-  from "../components/ImageForensics";
+    from "../components/ImageForensics";
 
 import SignatureVerification
-  from "../components/SignatureVerification";
+    from "../components/SignatureVerification";
 
 import DocumentForensics
-  from "../components/DocumentForensics";
+    from "../components/DocumentForensics";
 
 
 function Investigation() {
 
+    // ==========================================
+    // ANALYSIS TYPE
+    // ==========================================
 
-  // ==========================================
-  // ANALYSIS TYPE
-  // ==========================================
-
-  const [
-    analysisType,
-    setAnalysisType
-  ] = useState("image");
-
-
-  // ==========================================
-  // IMAGE FORENSICS STATE
-  // ==========================================
-
-  const [
-    files,
-    setFiles
-  ] = useState([]);
+    const [
+        analysisType,
+        setAnalysisType
+    ] = useState("image");
 
 
-  const [
-    processing,
-    setProcessing
-  ] = useState(false);
+    // ==========================================
+    // SELECTED FILES
+    // ==========================================
+
+    const [
+        files,
+        setFiles
+    ] = useState([]);
 
 
-  const [
-    results,
-    setResults
-  ] = useState([]);
+    // ==========================================
+    // PROCESSING STATE
+    // ==========================================
+
+    const [
+        processing,
+        setProcessing
+    ] = useState(false);
 
 
-  const [
-    error,
-    setError
-  ] = useState("");
+    // ==========================================
+    // ANALYSIS RESULTS
+    //
+    // This contains results from:
+    //
+    // Image:
+    // results[i].analysis
+    //
+    // Document:
+    // results[i].documentAnalysis
+    // ==========================================
+
+    const [
+        results,
+        setResults
+    ] = useState([]);
 
 
-  return (
+    // ==========================================
+    // ERROR
+    // ==========================================
 
-    <div className="min-h-screen bg-slate-950 text-white">
-
-
-      {/* ================================= */}
-      {/* HEADER */}
-      {/* ================================= */}
-
-      <nav className="border-b border-slate-800 px-8 py-5">
-
-        <h1 className="text-2xl font-bold">
-          AI-FORGE
-        </h1>
+    const [
+        error,
+        setError
+    ] = useState("");
 
 
-        <p className="text-sm text-slate-400">
-          Multimodal Fraud Investigation
-        </p>
+    // ==========================================
+    // HANDLE ANALYSIS TYPE CHANGE
+    // ==========================================
 
-      </nav>
+    const handleAnalysisTypeChange = (type) => {
 
+        setAnalysisType(type);
 
-      {/* ================================= */}
-      {/* MAIN */}
-      {/* ================================= */}
+        // Clear previous files
+        setFiles([]);
 
-      <main className="mx-auto max-w-6xl px-8 py-12">
+        // Clear previous results
+        setResults([]);
 
+        // Clear previous errors
+        setError("");
 
-        <h2 className="text-4xl font-bold">
-          Evidence Investigation
-        </h2>
-
-
-        <p className="mt-3 text-slate-400">
-
-          Upload digital evidence and run
-          AI-powered forensic analysis.
-
-        </p>
+    };
 
 
-        {/* ================================= */}
-        {/* ANALYSIS SELECTOR */}
-        {/* ================================= */}
+    // ==========================================
+    // GET DOCUMENT RESULT
+    // ==========================================
 
-        <AnalysisSelector
+    const documentResult =
 
-          analysisType={
-            analysisType
-          }
+        results.find(
 
-          setAnalysisType={
-            setAnalysisType
-          }
+            (item) =>
 
-        />
+                item.fileType === "document" &&
+
+                item.status === "completed"
+
+        );
 
 
-        {/* ================================= */}
-        {/* IMAGE FORENSICS */}
-        {/* ================================= */}
+    // ==========================================
+    // DOCUMENT FORENSICS
+    // ==========================================
 
-        {analysisType ===
-          "image" && (
+    {analysisType === "document" && (
 
-          <>
+        <>
 
             <EvidenceUploader
 
-              files={
-                files
-              }
+                files={files}
 
-              setFiles={
-                setFiles
-              }
+                setFiles={setFiles}
 
-              processing={
-                processing
-              }
+                processing={processing}
 
-              setProcessing={
-                setProcessing
-              }
+                setProcessing={setProcessing}
 
-              setResults={
-                setResults
-              }
+                setResults={setResults}
 
-              error={
-                error
-              }
+                error={error}
 
-              setError={
-                setError
-              }
+                setError={setError}
 
             />
 
 
-            <ImageForensics
+            <DocumentForensics
 
-              files={
-                files
-              }
-
-              results={
-                results
-              }
+                result={
+                    documentResult?.documentAnalysis
+                }
 
             />
 
-          </>
+        </>
 
-        )}
+    )}
+
+    // ==========================================
+    // GET IMAGE RESULTS
+    // ==========================================
+
+    const imageResults =
+
+        results.filter(
+
+            (item) =>
+
+                item.fileType === "image" &&
+
+                item.status === "completed"
+
+        );
 
 
-        {/* ================================= */}
-        {/* SIGNATURE VERIFICATION */}
-        {/* ================================= */}
+    return (
 
-        {analysisType ===
-          "signature" && (
-
-          <SignatureVerification />
-
-        )}
+        <div className="min-h-screen bg-slate-950 text-white">
 
 
-        {/* ================================= */}
-        {/* DOCUMENT FORENSICS */}
-        {/* ================================= */}
+            {/* ================================= */}
+            {/* HEADER */}
+            {/* ================================= */}
 
-        {analysisType ===
-          "document" && (
+            <nav className="border-b border-slate-800 px-8 py-5">
 
-          <DocumentForensics />
+                <h1 className="text-2xl font-bold">
 
-        )}
+                    AI-FORGE
 
-      </main>
+                </h1>
 
-    </div>
 
-  );
+                <p className="text-sm text-slate-400">
+
+                    Multimodal Fraud Investigation
+
+                </p>
+
+            </nav>
+
+
+
+            {/* ================================= */}
+            {/* MAIN */}
+            {/* ================================= */}
+
+            <main className="mx-auto max-w-6xl px-8 py-12">
+
+
+            <h2 className="text-4xl font-bold">
+                Evidence Investigation
+            </h2>
+
+
+                <p className="mt-3 text-slate-400">
+
+                    Upload digital evidence and run
+                    AI-powered forensic analysis.
+
+                </p>
+
+
+
+                {/* ================================= */}
+                {/* ANALYSIS SELECTOR */}
+                {/* ================================= */}
+
+                <AnalysisSelector
+
+                    analysisType={
+                        analysisType
+                    }
+
+                    setAnalysisType={
+                        handleAnalysisTypeChange
+                    }
+
+                />
+
+
+
+                {/* ================================= */}
+                {/* UPLOADER */}
+                {/*================================= */ }
+                {(
+
+                    analysisType === "image" ||
+
+                    analysisType === "document"
+
+                ) && (
+
+                    <EvidenceUploader
+
+                        files={
+                            files
+                        }
+
+                        setFiles={
+                            setFiles
+                        }
+
+                        processing={
+                            processing
+                        }
+
+                        setProcessing={
+                            setProcessing
+                        }
+
+                        setResults={
+                            setResults
+                        }
+
+                        error={
+                            error
+                        }
+
+                        setError={
+                            setError
+                        }
+
+                        analysisType={
+                            analysisType
+                        }
+
+                    />
+
+                )}
+
+
+
+                {/* ================================= */}
+                {/* IMAGE FORENSICS */}
+                {/* ================================= */}
+
+                {analysisType === "image" && (
+
+                    <ImageForensics
+
+                        files={
+                            files
+                        }
+
+                        results={
+                            imageResults
+                        }
+
+                    />
+
+                )}
+
+
+
+                {/* ================================= */}
+                {/* SIGNATURE VERIFICATION */}
+                {/* ================================= */}
+
+                {analysisType === "signature" && (
+
+                    <SignatureVerification />
+
+                )}
+
+
+
+                {/* ================================= */}
+                {/* DOCUMENT FORENSICS */}
+                {/* ================================= */}
+
+                {analysisType === "document" && (
+
+                  <>
+
+                    <EvidenceUploader
+
+                      files={files}
+
+                      setFiles={setFiles}
+
+                      processing={processing}
+
+                      setProcessing={setProcessing}
+
+                      setResults={setResults}
+
+                      error={error}
+
+                      setError={setError}
+
+                    />
+
+
+                    <DocumentForensics
+
+                      result={
+                        results.find(
+                          (item) =>
+                            item.fileType === "document" &&
+                            item.status === "completed"
+                        )?.documentAnalysis
+                      }
+
+                    />
+
+                  </>
+
+                )}
+
+            </main>
+
+        </div>
+
+    );
 
 }
+
 
 export default Investigation;

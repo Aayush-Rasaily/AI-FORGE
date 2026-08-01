@@ -553,3 +553,64 @@ export function getApiBaseUrl() {
     return API_BASE_URL;
 
 }
+
+// ------------------------------------
+// Analyze PDF Document
+// ------------------------------------
+
+export async function analyzeDocument(
+    evidenceId
+) {
+
+    try {
+
+        const response = await fetch(
+            `${API_BASE_URL}/api/evidence/analyze-document/${evidenceId}`, {
+                method: "POST",
+            }
+        );
+
+
+        if (!response.ok) {
+
+            let errorMessage =
+                "Document analysis failed";
+
+
+            try {
+
+                const errorData =
+                    await response.json();
+
+                errorMessage =
+                    errorData.detail ||
+                    errorMessage;
+
+            } catch {
+
+                // Ignore JSON parsing error
+
+            }
+
+
+            throw new Error(
+                errorMessage
+            );
+
+        }
+
+
+        return await response.json();
+
+    } catch (error) {
+
+        console.error(
+            "Document analysis error:",
+            error
+        );
+
+        throw error;
+
+    }
+
+}

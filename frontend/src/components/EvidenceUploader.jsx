@@ -1,10 +1,13 @@
 import {
   uploadEvidence,
-  analyzeImage
+  analyzeImage,
+  analyzeDocument
 } from "../services/api";
 
 
 function EvidenceUploader({
+
+  analysisType,
 
   files,
   setFiles,
@@ -21,18 +24,38 @@ function EvidenceUploader({
 
 
   // ==========================================
+  // FILE CONFIGURATION
+  // ==========================================
+
+  const isDocument =
+    analysisType === "document";
+
+
+  const acceptedTypes = isDocument
+
+    ? ".pdf,.doc,.docx"
+
+    : ".jpg,.jpeg,.png,.webp";
+
+
+  const supportedText = isDocument
+
+    ? "Supported: PDF, DOC, DOCX"
+
+    : "Supported: JPG, JPEG, PNG, WEBP";
+
+
+  // ==========================================
   // FILE SELECTION
   // ==========================================
 
   const handleFileChange = (event) => {
 
-    const selectedFiles =
-      Array.from(
-        event.target.files || []
-      );
+    const selectedFiles = Array.from(
+      event.target.files || []
+    );
 
 
-    // No files selected
     if (
       selectedFiles.length === 0
     ) {
@@ -60,14 +83,10 @@ function EvidenceUploader({
 
 
   // ==========================================
-  // IMAGE ANALYSIS
+  // ANALYZE EVIDENCE
   // ==========================================
 
   const handleAnalyze = async () => {
-
-    // ----------------------------------------
-    // Validate files
-    // ----------------------------------------
 
     if (
       !files ||
@@ -75,17 +94,19 @@ function EvidenceUploader({
     ) {
 
       setError(
-        "Please select at least one image."
+
+        isDocument
+
+          ? "Please select at least one document."
+
+          : "Please select at least one image."
+
       );
 
       return;
 
     }
 
-
-    // ----------------------------------------
-    // Start Processing
-    // ----------------------------------------
 
     setProcessing(
       true
@@ -108,7 +129,7 @@ function EvidenceUploader({
 
 
       // ======================================
-      // Process Each File
+      // PROCESS EACH FILE
       // ======================================
 
       for (
@@ -118,8 +139,13 @@ function EvidenceUploader({
 
         try {
 
+          console.log(
+            `[UPLOAD] Uploading: ${file.name}`
+          );
+
+
           // ----------------------------------
-          // Upload Evidence
+          // UPLOAD
           // ----------------------------------
 
           const uploadResult =
@@ -128,17 +154,19 @@ function EvidenceUploader({
             );
 
 
+          console.log(
+            "[UPLOAD RESULT]",
+            uploadResult
+          );
+
+
           // ----------------------------------
-          // Get Evidence ID
+          // EVIDENCE ID
           // ----------------------------------
 
           const evidenceId =
             uploadResult.evidence_id;
 
-
-          // ----------------------------------
-          // Validate Evidence ID
-          // ----------------------------------
 
           if (!evidenceId) {
 
@@ -150,13 +178,61 @@ function EvidenceUploader({
 
 
           // ----------------------------------
-          // Check File Type
+          // FILE TYPE
           // ----------------------------------
 
+          const fileType =
+            uploadResult.file_type;
+
+
+          console.log(
+            `[ANALYSIS] ${file.name} -> ${fileType}`
+          );
+
+
+          // ==================================
+          // IMAGE FORENSICS
+          // ==================================
+
           if (
-            uploadResult.file_type !==
-            "image"
+            analysisType === "image"
           ) {
+
+
+            if (
+              fileType !== "image"
+            ) {
+
+              throw new Error(
+
+                "Please upload a valid image file for Image Forensics."
+
+              );
+
+            }
+
+
+            console.log(
+
+              `[IMAGE] Starting analysis for ${evidenceId}`
+
+            );
+
+
+            const analysisResult =
+              await analyzeImage(
+                evidenceId
+              );
+
+
+            console.log(
+
+              "[IMAGE ANALYSIS RESULT]",
+
+              analysisResult
+
+            );
+
 
             analysisResults.push({
 
@@ -166,11 +242,14 @@ function EvidenceUploader({
               evidenceId:
                 evidenceId,
 
-              status:
-                "unsupported",
+              fileType:
+                "image",
 
-              message:
-                "Forensic image analysis is currently available only for images."
+              status:
+                "completed",
+
+              analysis:
+                analysisResult.analysis
 
             });
 
@@ -180,49 +259,97 @@ function EvidenceUploader({
           }
 
 
-          // ----------------------------------
-          // Run Unified Image Analysis
-          //
-          // This runs:
-          //
-          // ELA
-          // Edge Detection
-          // Wavelet Analysis
-          // Copy-Move Detection
-          // ----------------------------------
+          // ==================================
+          // DOCUMENT FORENSICS
+          // ==================================
 
-          const analysisResult =
-            await analyzeImage(
-              evidenceId
+          if (
+            analysisType === "document"
+          ) {
+
+
+            if (
+
+              fileType !== "document" &&
+
+              fileType !== "pdf"
+
+            ) {
+
+              throw new Error(
+
+                "Please upload a PDF, DOC, or DOCX file for Document Forensics."
+
+              );
+
+            }
+
+
+            console.log(
+
+              `[DOCUMENT] Starting analysis for ${evidenceId}`
+
             );
 
 
-          // ----------------------------------
-          // Save Successful Result
-          // ----------------------------------
+            const documentResult =
+              await analyzeDocument(
+                evidenceId
+              );
 
-          analysisResults.push({
 
-            filename:
-              file.name,
+            console.log(
 
-            evidenceId:
-              evidenceId,
+              "[DOCUMENT ANALYSIS RESULT]",
 
-            status:
-              "completed",
+              documentResult
 
-            analysis:
-              analysisResult.analysis
+            );
 
-          });
+
+            // --------------------------------
+            // IMPORTANT
+            // Store complete document analysis
+            // --------------------------------
+
+            analysisResults.push({
+
+              filename:
+                file.name,
+
+              evidenceId:
+                evidenceId,
+
+              fileType:
+                "document",
+
+              status:
+                "completed",
+
+              documentAnalysis:
+                documentResult.analysis
+
+            });
+
+
+            continue;
+
+          }
+
+
+          // ==================================
+          // UNKNOWN ANALYSIS TYPE
+          // ==================================
+
+          throw new Error(
+
+            "Unknown analysis type."
+
+          );
 
 
         } catch (fileError) {
 
-          // ----------------------------------
-          // Handle Individual File Error
-          // ----------------------------------
 
           console.error(
 
@@ -238,12 +365,20 @@ function EvidenceUploader({
             filename:
               file.name,
 
+            evidenceId:
+              null,
+
+            fileType:
+              analysisType,
+
             status:
               "failed",
 
             message:
-              fileError.message ||
-              "Analysis failed for this image."
+
+              fileError?.message ||
+
+              "Analysis failed for this file."
 
           });
 
@@ -253,23 +388,37 @@ function EvidenceUploader({
 
 
       // ======================================
-      // Update Results
+      // SAVE RESULTS
       // ======================================
 
-      setResults(
+      console.log(
+
+        "[FINAL ANALYSIS RESULTS]",
+
         analysisResults
+
+      );
+
+
+      setResults(
+
+        analysisResults
+
       );
 
 
       // ======================================
-      // Check if All Failed
+      // CHECK ALL FAILED
       // ======================================
 
       const failedResults =
+
         analysisResults.filter(
 
           (item) =>
+
             item.status ===
+
             "failed"
 
         );
@@ -277,13 +426,22 @@ function EvidenceUploader({
 
       if (
 
+        failedResults.length > 0 &&
+
         failedResults.length ===
+
         analysisResults.length
 
       ) {
 
         setError(
-          "Image analysis failed for all selected files."
+
+          isDocument
+
+            ? "Document analysis failed for all selected files."
+
+            : "Image analysis failed for all selected files."
+
         );
 
       }
@@ -291,33 +449,32 @@ function EvidenceUploader({
 
     } catch (error) {
 
-      // ======================================
-      // Global Error
-      // ======================================
 
       console.error(
-        "Image analysis error:",
+
+        "Evidence analysis error:",
+
         error
+
       );
 
 
       setError(
 
-        error.message ||
+        error?.message ||
 
-        "Analysis failed."
+        "Evidence analysis failed."
 
       );
 
 
     } finally {
 
-      // ======================================
-      // Stop Processing
-      // ======================================
 
       setProcessing(
+
         false
+
       );
 
     }
@@ -342,15 +499,20 @@ function EvidenceUploader({
 
         <h3 className="text-xl font-semibold">
 
-          Upload Evidence
+          {isDocument
+
+            ? "Upload Document Evidence"
+
+            : "Upload Image Evidence"
+
+          }
 
         </h3>
 
 
         <p className="mt-3 text-sm text-slate-400">
 
-          Currently supported:
-          JPG, JPEG, PNG, WEBP
+          {supportedText}
 
         </p>
 
@@ -358,7 +520,13 @@ function EvidenceUploader({
         <label className="mt-6 inline-block cursor-pointer rounded-lg bg-blue-600 px-6 py-3 font-semibold transition hover:bg-blue-500">
 
 
-          Select Images
+          {isDocument
+
+            ? "Select Documents"
+
+            : "Select Images"
+
+          }
 
 
           <input
@@ -367,7 +535,9 @@ function EvidenceUploader({
 
             multiple
 
-            accept="image/jpeg,image/jpg,image/png,image/webp"
+            accept={
+              acceptedTypes
+            }
 
             onChange={
               handleFileChange
@@ -389,6 +559,7 @@ function EvidenceUploader({
       {/* ================================= */}
 
       {files &&
+
         files.length > 0 && (
 
           <div className="mt-8">
@@ -419,7 +590,6 @@ function EvidenceUploader({
 
                     <div>
 
-
                       <p className="font-medium">
 
                         {file.name}
@@ -428,7 +598,6 @@ function EvidenceUploader({
 
 
                       <p className="text-sm text-slate-400">
-
 
                         {(
 
@@ -440,12 +609,9 @@ function EvidenceUploader({
 
                         ).toFixed(2)}
 
-
                         {" "}MB
 
-
                       </p>
-
 
                     </div>
 
@@ -463,14 +629,12 @@ function EvidenceUploader({
 
               )}
 
-
             </div>
 
 
             {/* ================================= */}
             {/* ANALYZE BUTTON */}
             {/* ================================= */}
-
 
             <button
 
@@ -486,15 +650,17 @@ function EvidenceUploader({
 
             >
 
-
               {processing
 
                 ? "Analyzing Evidence..."
 
-                : "Analyze Evidence"
+                : isDocument
+
+                  ? "Analyze Document"
+
+                  : "Analyze Images"
 
               }
-
 
             </button>
 
@@ -508,19 +674,15 @@ function EvidenceUploader({
       {/* ERROR */}
       {/* ================================= */}
 
-
       {error && (
 
         <div className="mt-8 rounded-lg border border-red-800 bg-red-950 p-5 text-red-300">
 
-
           🔴 {error}
-
 
         </div>
 
       )}
-
 
     </>
 
