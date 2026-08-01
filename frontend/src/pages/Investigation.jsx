@@ -15,6 +15,12 @@ import SignatureVerification
 import DocumentForensics
     from "../components/DocumentForensics";
 
+import VideoForensics
+    from "../components/VideoForensics";
+
+import UnifiedFraudDashboard
+    from "../components/UnifiedFraudDashboard";
+
 
 function Investigation() {
 
@@ -49,21 +55,33 @@ function Investigation() {
 
 
     // ==========================================
-    // ANALYSIS RESULTS
-    //
-    // This contains results from:
-    //
-    // Image:
-    // results[i].analysis
-    //
-    // Document:
-    // results[i].documentAnalysis
+    // IMAGE / DOCUMENT RESULTS
     // ==========================================
 
     const [
         results,
         setResults
     ] = useState([]);
+
+
+    // ==========================================
+    // SIGNATURE RESULT
+    // ==========================================
+
+    const [
+        signatureResult,
+        setSignatureResult
+    ] = useState(null);
+
+
+    // ==========================================
+    // VIDEO RESULT
+    // ==========================================
+
+    const [
+    videoResult,
+    setVideoResult
+    ] = useState(null);
 
 
     // ==========================================
@@ -84,73 +102,15 @@ function Investigation() {
 
         setAnalysisType(type);
 
-        // Clear previous files
+        // Clear temporary upload state
         setFiles([]);
 
-        // Clear previous results
-        setResults([]);
+        setProcessing(false);
 
-        // Clear previous errors
         setError("");
 
     };
 
-
-    // ==========================================
-    // GET DOCUMENT RESULT
-    // ==========================================
-
-    const documentResult =
-
-        results.find(
-
-            (item) =>
-
-                item.fileType === "document" &&
-
-                item.status === "completed"
-
-        );
-
-
-    // ==========================================
-    // DOCUMENT FORENSICS
-    // ==========================================
-
-    {analysisType === "document" && (
-
-        <>
-
-            <EvidenceUploader
-
-                files={files}
-
-                setFiles={setFiles}
-
-                processing={processing}
-
-                setProcessing={setProcessing}
-
-                setResults={setResults}
-
-                error={error}
-
-                setError={setError}
-
-            />
-
-
-            <DocumentForensics
-
-                result={
-                    documentResult?.documentAnalysis
-                }
-
-            />
-
-        </>
-
-    )}
 
     // ==========================================
     // GET IMAGE RESULTS
@@ -167,6 +127,38 @@ function Investigation() {
                 item.status === "completed"
 
         );
+
+
+    // ==========================================
+    // GET DOCUMENT RESULT
+    // ==========================================
+
+    const documentResult =
+
+        results.find(
+
+            (item) =>
+
+                (
+
+                    item.fileType === "document" ||
+
+                    item.fileType === "pdf"
+
+                ) &&
+
+                item.status === "completed"
+
+        );
+
+
+    // ==========================================
+    // GET DOCUMENT ANALYSIS
+    // ==========================================
+
+    const documentAnalysis =
+
+        documentResult?.documentAnalysis || null;
 
 
     return (
@@ -196,17 +188,18 @@ function Investigation() {
             </nav>
 
 
-
             {/* ================================= */}
             {/* MAIN */}
             {/* ================================= */}
 
-            <main className="mx-auto max-w-6xl px-8 py-12">
+            <main className="mx-auto max-w-7xl px-8 py-12">
 
 
-            <h2 className="text-4xl font-bold">
-                Evidence Investigation
-            </h2>
+                <h2 className="text-4xl font-bold">
+
+                    Evidence Investigation
+
+                </h2>
 
 
                 <p className="mt-3 text-slate-400">
@@ -217,7 +210,6 @@ function Investigation() {
                 </p>
 
 
-
                 {/* ================================= */}
                 {/* ANALYSIS SELECTOR */}
                 {/* ================================= */}
@@ -225,66 +217,18 @@ function Investigation() {
                 <AnalysisSelector
 
                     analysisType={
+
                         analysisType
+
                     }
 
                     setAnalysisType={
+
                         handleAnalysisTypeChange
+
                     }
 
                 />
-
-
-
-                {/* ================================= */}
-                {/* UPLOADER */}
-                {/*================================= */ }
-                {(
-
-                    analysisType === "image" ||
-
-                    analysisType === "document"
-
-                ) && (
-
-                    <EvidenceUploader
-
-                        files={
-                            files
-                        }
-
-                        setFiles={
-                            setFiles
-                        }
-
-                        processing={
-                            processing
-                        }
-
-                        setProcessing={
-                            setProcessing
-                        }
-
-                        setResults={
-                            setResults
-                        }
-
-                        error={
-                            error
-                        }
-
-                        setError={
-                            setError
-                        }
-
-                        analysisType={
-                            analysisType
-                        }
-
-                    />
-
-                )}
-
 
 
                 {/* ================================= */}
@@ -293,20 +237,80 @@ function Investigation() {
 
                 {analysisType === "image" && (
 
-                    <ImageForensics
+                    <>
 
-                        files={
-                            files
-                        }
+                        <EvidenceUploader
 
-                        results={
-                            imageResults
-                        }
+                            files={
 
-                    />
+                                files
+
+                            }
+
+                            setFiles={
+
+                                setFiles
+
+                            }
+
+                            processing={
+
+                                processing
+
+                            }
+
+                            setProcessing={
+
+                                setProcessing
+
+                            }
+
+                            setResults={
+
+                                setResults
+
+                            }
+
+                            error={
+
+                                error
+
+                            }
+
+                            setError={
+
+                                setError
+
+                            }
+
+                            analysisType={
+
+                                analysisType
+
+                            }
+
+                        />
+
+
+                        <ImageForensics
+
+                            files={
+
+                                files
+
+                            }
+
+                            results={
+
+                                imageResults
+
+                            }
+
+                        />
+
+                    </>
 
                 )}
-
 
 
                 {/* ================================= */}
@@ -315,10 +319,17 @@ function Investigation() {
 
                 {analysisType === "signature" && (
 
-                    <SignatureVerification />
+                    <SignatureVerification
+
+                        onResult={
+
+                            setSignatureResult
+
+                        }
+
+                    />
 
                 )}
-
 
 
                 {/* ================================= */}
@@ -327,40 +338,122 @@ function Investigation() {
 
                 {analysisType === "document" && (
 
-                  <>
+                    <>
 
-                    <EvidenceUploader
+                        <EvidenceUploader
 
-                      files={files}
+                            files={
 
-                      setFiles={setFiles}
+                                files
 
-                      processing={processing}
+                            }
 
-                      setProcessing={setProcessing}
+                            setFiles={
 
-                      setResults={setResults}
+                                setFiles
 
-                      error={error}
+                            }
 
-                      setError={setError}
+                            processing={
 
+                                processing
+
+                            }
+
+                            setProcessing={
+
+                                setProcessing
+
+                            }
+
+                            setResults={
+
+                                setResults
+
+                            }
+
+                            error={
+
+                                error
+
+                            }
+
+                            setError={
+
+                                setError
+
+                            }
+
+                            analysisType={
+
+                                analysisType
+
+                            }
+
+                        />
+
+
+                        <DocumentForensics
+
+                            result={
+
+                                documentAnalysis
+
+                            }
+
+                        />
+
+                    </>
+
+                )}
+
+
+                {/* ================================= */}
+                {/* VIDEO FORENSICS */}
+                {/* ================================= */}
+
+                {analysisType === "video" && (
+
+                    <VideoForensics
+                        onResult={setVideoResult}
                     />
 
+                )}
 
-                    <DocumentForensics
 
-                      result={
-                        results.find(
-                          (item) =>
-                            item.fileType === "document" &&
-                            item.status === "completed"
-                        )?.documentAnalysis
-                      }
+                {/* ================================= */}
+                {/* UNIFIED FRAUD DASHBOARD */}
+                {/* ================================= */}
+
+                {analysisType === "dashboard" && (
+
+                    <UnifiedFraudDashboard
+
+                        imageResults={
+
+                            imageResults
+
+                        }
+
+                        documentResult={
+
+                            documentAnalysis
+
+                        }
+
+                        signatureResult={
+
+                            signatureResult
+
+                        }
+
+                        videoResult={
+
+                            videoResult
+
+                        }
 
                     />
-
-                  </>
 
                 )}
 

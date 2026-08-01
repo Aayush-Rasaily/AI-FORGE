@@ -5,7 +5,7 @@ import {
 } from "../services/api";
 
 
-export default function SignatureVerification() {
+export default function SignatureVerification({ onResult }) {
 
     const [
         referenceFile,
@@ -71,10 +71,11 @@ export default function SignatureVerification() {
                 );
 
 
-            setResult(
-                data.analysis
-            );
+            setResult(data.result);
 
+            if (onResult) {
+                onResult(data.result);
+            }
 
         } catch (err) {
 

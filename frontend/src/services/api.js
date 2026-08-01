@@ -614,3 +614,101 @@ export async function analyzeDocument(
     }
 
 }
+// ==========================================
+// Video Analytics
+// ==========================================
+
+export async function analyzeVideo(
+    videoFile
+) {
+
+    if (!videoFile) {
+
+        throw new Error(
+            "Video file is required."
+        );
+
+    }
+
+
+    try {
+
+        const formData =
+            new FormData();
+
+
+        formData.append(
+            "file",
+            videoFile
+        );
+
+
+        const response =
+            await fetch(
+
+                `${API_BASE_URL}/api/video/analyze`,
+
+                {
+
+                    method: "POST",
+
+                    body: formData
+
+                }
+
+            );
+
+
+        if (!response.ok) {
+
+            const errorMessage =
+                await getApiError(
+
+                    response,
+
+                    "Video analysis failed."
+
+                );
+
+
+            throw new Error(
+
+                errorMessage
+
+            );
+
+        }
+
+
+        const data =
+            await response.json();
+
+
+        console.log(
+
+            "[VIDEO ANALYSIS RESULT]",
+
+            data
+
+        );
+
+
+        return data;
+
+
+    } catch (error) {
+
+        console.error(
+
+            "Video analysis error:",
+
+            error
+
+        );
+
+
+        throw error;
+
+    }
+
+}
