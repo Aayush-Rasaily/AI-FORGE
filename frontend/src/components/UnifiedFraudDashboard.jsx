@@ -1,3 +1,78 @@
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+} from "recharts";
+
+import GlassCard from "./ui/GlassCard";
+import RiskGauge from "./ui/RiskGauge";
+import StatusBadge from "./ui/StatusBadge";
+
+/* ========================================= */
+/* Compute aggregate risk from evidence      */
+/* ========================================= */
+
+function computeAggregateRisk(
+  imageResults,
+  documentResult,
+  signatureResult,
+  videoResult
+) {
+
+  const scores = [];
+
+  imageResults.forEach((item) => {
+
+    const score =
+      Number(item.analysis?.forensic_score) || 0;
+
+    if (score > 0) {
+      scores.push(score);
+    }
+
+  });
+
+
+  if (signatureResult) {
+
+    const sigRisk =
+      (1 - (signatureResult.similarity || 0)) * 100;
+
+    scores.push(sigRisk);
+
+  }
+
+
+  if (documentResult?.risk_score) {
+
+    scores.push(Number(documentResult.risk_score));
+
+  }
+
+
+  if (videoResult?.summary?.risk_score) {
+
+    scores.push(Number(videoResult.summary.risk_score));
+
+  }
+
+
+  if (scores.length === 0) {
+    return 0;
+  }
+
+
+  return (
+    scores.reduce((a, b) => a + b, 0) / scores.length
+  );
+
+}
+
+
 function UnifiedFraudDashboard({
 
     imageResults = [],
@@ -10,17 +85,62 @@ function UnifiedFraudDashboard({
 
 }) {
 
+    /* ========================================= */
+    /* Derived risk metrics (display only)       */
+    /* ========================================= */
+
+    const aggregateRisk = computeAggregateRisk(
+      imageResults,
+      documentResult,
+      signatureResult,
+      videoResult
+    );
+
+
+    const pipelineData = [
+
+      {
+        name: "Image",
+        status: imageResults.length > 0 ? 1 : 0,
+        label: imageResults.length > 0 ? "Available" : "Pending",
+      },
+
+      {
+        name: "Document",
+        status: documentResult ? 1 : 0,
+        label: documentResult ? "Available" : "Pending",
+      },
+
+      {
+        name: "Signature",
+        status: signatureResult ? 1 : 0,
+        label: signatureResult ? signatureResult.verdict : "Pending",
+      },
+
+      {
+        name: "Video",
+        status: videoResult ? 1 : 0,
+        label: videoResult ? "Available" : "Pending",
+      },
+
+    ];
+
+
+    const activePipelines =
+      pipelineData.filter((p) => p.status === 1).length;
+
+
     return (
 
-        <div className="mt-10 space-y-8">
+        <div className="space-y-8">
 
             {/* ================================= */}
-            {/* HEADER */}
+            {/* HEADER                            */}
             {/* ================================= */}
 
             <div>
 
-                <h2 className="text-3xl font-bold">
+                <h2 className="text-3xl font-bold text-white">
 
                     Unified Fraud Risk Dashboard
 
@@ -37,15 +157,93 @@ function UnifiedFraudDashboard({
 
 
             {/* ================================= */}
-            {/* ANALYSIS STATUS */}
+            {/* RISK GAUGE + PIPELINE CHART       */}
             {/* ================================= */}
 
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-6 lg:grid-cols-2">
+
+              <GlassCard gradient="red" hover={false} className="flex flex-col items-center justify-center">
+
+                <RiskGauge
+                  score={aggregateRisk}
+                  label="Aggregate Fraud Risk"
+                />
+
+                <p className="mt-4 text-sm text-slate-400">
+
+                  Based on {activePipelines} active pipeline{activePipelines !== 1 ? "s" : ""}
+
+                </p>
+
+              </GlassCard>
+
+
+              <GlassCard gradient="blue" hover={false}>
+
+                <h3 className="mb-4 text-lg font-semibold text-white">
+
+                  Pipeline Status
+
+                </h3>
+
+                <ResponsiveContainer width="100%" height={200}>
+
+                  <BarChart data={pipelineData}>
+
+                    <XAxis
+                      dataKey="name"
+                      tick={{ fill: "#94a3b8", fontSize: 12 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+
+                    <YAxis hide domain={[0, 1]} />
+
+                    <Tooltip
+                      contentStyle={{
+                        background: "rgba(15, 23, 42, 0.9)",
+                        border: "1px solid rgba(148, 163, 184, 0.2)",
+                        borderRadius: "8px",
+                        color: "#f8fafc",
+                      }}
+                      formatter={(_, __, props) => [
+                        props.payload.label,
+                        "Status",
+                      ]}
+                    />
+
+                    <Bar dataKey="status" radius={[6, 6, 0, 0]}>
+
+                      {pipelineData.map((entry, index) => (
+
+                        <Cell
+                          key={index}
+                          fill={entry.status ? "#3b82f6" : "#334155"}
+                        />
+
+                      ))}
+
+                    </Bar>
+
+                  </BarChart>
+
+                </ResponsiveContainer>
+
+              </GlassCard>
+
+            </div>
+
+
+            {/* ================================= */}
+            {/* ANALYSIS STATUS CARDS             */}
+            {/* ================================= */}
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 
 
                 {/* IMAGE */}
 
-                <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+                <GlassCard gradient="blue" hover={false}>
 
                     <p className="text-sm text-slate-400">
 
@@ -53,7 +251,7 @@ function UnifiedFraudDashboard({
 
                     </p>
 
-                    <p className="mt-3 text-xl font-bold">
+                    <p className="mt-3 text-xl font-bold text-white">
 
                         {imageResults.length > 0
 
@@ -65,12 +263,20 @@ function UnifiedFraudDashboard({
 
                     </p>
 
-                </div>
+                    {imageResults.length > 0 && (
+                      <div className="mt-2">
+                        <StatusBadge
+                          status={imageResults[0]?.analysis?.verdict}
+                        />
+                      </div>
+                    )}
+
+                </GlassCard>
 
 
                 {/* DOCUMENT */}
 
-                <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+                <GlassCard gradient="green" hover={false}>
 
                     <p className="text-sm text-slate-400">
 
@@ -78,7 +284,7 @@ function UnifiedFraudDashboard({
 
                     </p>
 
-                    <p className="mt-3 text-xl font-bold">
+                    <p className="mt-3 text-xl font-bold text-white">
 
                         {documentResult
 
@@ -90,12 +296,12 @@ function UnifiedFraudDashboard({
 
                     </p>
 
-                </div>
+                </GlassCard>
 
 
                 {/* SIGNATURE */}
 
-                <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+                <GlassCard gradient="purple" hover={false}>
 
                     <p className="text-sm text-slate-400">
 
@@ -103,7 +309,7 @@ function UnifiedFraudDashboard({
 
                     </p>
 
-                    <p className="mt-3 text-xl font-bold">
+                    <p className="mt-3 text-xl font-bold text-white">
 
                         {signatureResult
 
@@ -115,12 +321,16 @@ function UnifiedFraudDashboard({
 
                     </p>
 
-                </div>
+                    {signatureResult && (
+                      <StatusBadge status={signatureResult.verdict} />
+                    )}
+
+                </GlassCard>
 
 
                 {/* VIDEO */}
 
-                <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+                <GlassCard gradient="red" hover={false}>
 
                     <p className="text-sm text-slate-400">
 
@@ -128,7 +338,7 @@ function UnifiedFraudDashboard({
 
                     </p>
 
-                    <p className="mt-3 text-xl font-bold">
+                    <p className="mt-3 text-xl font-bold text-white">
 
                         {videoResult
 
@@ -140,20 +350,20 @@ function UnifiedFraudDashboard({
 
                     </p>
 
-                </div>
+                </GlassCard>
 
             </div>
 
 
             {/* ================================= */}
-            {/* SIGNATURE RESULT */}
+            {/* SIGNATURE RESULT                  */}
             {/* ================================= */}
 
             {signatureResult && (
 
-                <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+                <GlassCard gradient="purple" hover={false}>
 
-                    <h3 className="text-xl font-bold">
+                    <h3 className="text-xl font-bold text-white">
 
                         Signature Verification
 
@@ -163,7 +373,7 @@ function UnifiedFraudDashboard({
                     <div className="mt-6 grid gap-6 md:grid-cols-3">
 
 
-                        <div>
+                        <div className="rounded-lg bg-slate-800/50 p-4">
 
                             <p className="text-sm text-slate-400">
 
@@ -171,7 +381,7 @@ function UnifiedFraudDashboard({
 
                             </p>
 
-                            <p className="mt-2 text-2xl font-bold">
+                            <p className="mt-2 text-2xl font-bold text-white">
 
                                 {signatureResult.verdict}
 
@@ -180,7 +390,7 @@ function UnifiedFraudDashboard({
                         </div>
 
 
-                        <div>
+                        <div className="rounded-lg bg-slate-800/50 p-4">
 
                             <p className="text-sm text-slate-400">
 
@@ -188,7 +398,7 @@ function UnifiedFraudDashboard({
 
                             </p>
 
-                            <p className="mt-2 text-2xl font-bold">
+                            <p className="mt-2 text-2xl font-bold text-white">
 
                                 {(
 
@@ -203,7 +413,7 @@ function UnifiedFraudDashboard({
                         </div>
 
 
-                        <div>
+                        <div className="rounded-lg bg-slate-800/50 p-4">
 
                             <p className="text-sm text-slate-400">
 
@@ -211,7 +421,7 @@ function UnifiedFraudDashboard({
 
                             </p>
 
-                            <p className="mt-2 text-2xl font-bold">
+                            <p className="mt-2 text-2xl font-bold text-white">
 
                                 {(
 
@@ -227,20 +437,20 @@ function UnifiedFraudDashboard({
 
                     </div>
 
-                </div>
+                </GlassCard>
 
             )}
 
 
             {/* ================================= */}
-            {/* VIDEO RESULT */}
+            {/* VIDEO RESULT                      */}
             {/* ================================= */}
 
             {videoResult && (
 
-                <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+                <GlassCard gradient="red" hover={false}>
 
-                    <h3 className="text-xl font-bold">
+                    <h3 className="text-xl font-bold text-white">
 
                         Video Analytics
 
@@ -250,7 +460,7 @@ function UnifiedFraudDashboard({
                     <div className="mt-6 grid gap-6 md:grid-cols-3">
 
 
-                        <div>
+                        <div className="rounded-lg bg-slate-800/50 p-4">
 
                             <p className="text-sm text-slate-400">
 
@@ -258,7 +468,7 @@ function UnifiedFraudDashboard({
 
                             </p>
 
-                            <p className="mt-2 text-2xl font-bold">
+                            <p className="mt-2 text-2xl font-bold text-white">
 
                                 {videoResult.summary
                                     ?.frames_analyzed ?? 0}
@@ -268,7 +478,7 @@ function UnifiedFraudDashboard({
                         </div>
 
 
-                        <div>
+                        <div className="rounded-lg bg-slate-800/50 p-4">
 
                             <p className="text-sm text-slate-400">
 
@@ -276,7 +486,7 @@ function UnifiedFraudDashboard({
 
                             </p>
 
-                            <p className="mt-2 text-2xl font-bold">
+                            <p className="mt-2 text-2xl font-bold text-white">
 
                                 {videoResult.summary
                                     ?.average_brightness ?? 0}
@@ -286,7 +496,7 @@ function UnifiedFraudDashboard({
                         </div>
 
 
-                        <div>
+                        <div className="rounded-lg bg-slate-800/50 p-4">
 
                             <p className="text-sm text-slate-400">
 
@@ -294,7 +504,7 @@ function UnifiedFraudDashboard({
 
                             </p>
 
-                            <p className="mt-2 text-2xl font-bold">
+                            <p className="mt-2 text-2xl font-bold text-white">
 
                                 {videoResult.summary
                                     ?.average_blur_score ?? 0}
@@ -305,20 +515,20 @@ function UnifiedFraudDashboard({
 
                     </div>
 
-                </div>
+                </GlassCard>
 
             )}
 
 
             {/* ================================= */}
-            {/* IMAGE RESULTS */}
+            {/* IMAGE RESULTS                     */}
             {/* ================================= */}
 
             {imageResults.length > 0 && (
 
-                <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+                <GlassCard gradient="blue" hover={false}>
 
-                    <h3 className="text-xl font-bold">
+                    <h3 className="text-xl font-bold text-white">
 
                         Image Forensics
 
@@ -335,15 +545,23 @@ function UnifiedFraudDashboard({
 
                                     key={index}
 
-                                    className="rounded-lg border border-slate-700 bg-slate-950 p-5"
+                                    className="rounded-lg border border-slate-700/50 bg-slate-800/40 p-5"
 
                                 >
 
-                                    <p className="font-semibold">
+                                    <div className="flex items-center justify-between">
 
-                                        {item.filename}
+                                      <p className="font-semibold text-white">
 
-                                    </p>
+                                          {item.filename}
+
+                                      </p>
+
+                                      <StatusBadge
+                                        status={item.analysis?.verdict}
+                                      />
+
+                                    </div>
 
 
                                     <p className="mt-2 text-slate-400">
@@ -373,58 +591,66 @@ function UnifiedFraudDashboard({
 
                     </div>
 
-                </div>
+                </GlassCard>
 
             )}
 
 
             {/* ================================= */}
-            {/* DOCUMENT RESULTS */}
+            {/* DOCUMENT RESULTS                  */}
             {/* ================================= */}
 
             {documentResult && (
 
-                <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
+                <GlassCard gradient="green" hover={false}>
 
-                    <h3 className="text-xl font-bold">
+                    <h3 className="text-xl font-bold text-white">
 
                         Document Forensics
 
                     </h3>
 
 
-                    <div className="mt-6">
+                    <div className="mt-6 grid gap-4 sm:grid-cols-2">
 
-                        <p className="text-slate-400">
+                        <div className="rounded-lg bg-slate-800/50 p-4">
 
-                            Document Type:
+                            <p className="text-slate-400">
 
-                        </p>
+                                Document Type:
 
-                        <p className="mt-1 font-semibold">
+                            </p>
 
-                            {documentResult.document_type
-                                || "PDF"}
+                            <p className="mt-1 font-semibold text-white">
 
-                        </p>
+                                {documentResult.document_type
+                                    || "PDF"}
+
+                            </p>
+
+                        </div>
 
 
-                        <p className="mt-4 text-slate-400">
+                        <div className="rounded-lg bg-slate-800/50 p-4">
 
-                            Pages Analyzed:
+                            <p className="text-slate-400">
 
-                        </p>
+                                Pages Analyzed:
 
-                        <p className="mt-1 font-semibold">
+                            </p>
 
-                            {documentResult.page_count
-                                || 0}
+                            <p className="mt-1 font-semibold text-white">
 
-                        </p>
+                                {documentResult.page_count
+                                    || 0}
+
+                            </p>
+
+                        </div>
 
                     </div>
 
-                </div>
+                </GlassCard>
 
             )}
 

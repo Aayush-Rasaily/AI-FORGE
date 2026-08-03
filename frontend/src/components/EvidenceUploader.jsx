@@ -494,10 +494,10 @@ function EvidenceUploader({
       {/* UPLOAD SECTION */}
       {/* ================================= */}
 
-      <div className="mt-10 rounded-xl border-2 border-dashed border-slate-700 bg-slate-900 p-12 text-center">
+      <div className="mt-10 upload-zone rounded-xl p-12 text-center">
 
 
-        <h3 className="text-xl font-semibold">
+        <h3 className="text-xl font-semibold text-white">
 
           {isDocument
 
@@ -517,7 +517,7 @@ function EvidenceUploader({
         </p>
 
 
-        <label className="mt-6 inline-block cursor-pointer rounded-lg bg-blue-600 px-6 py-3 font-semibold transition hover:bg-blue-500">
+        <label className="mt-6 inline-block cursor-pointer rounded-lg bg-gradient-to-r from-blue-600 to-cyan-600 px-6 py-3 font-semibold text-white shadow-lg shadow-blue-500/20 transition hover:from-blue-500 hover:to-cyan-500">
 
 
           {isDocument
@@ -583,7 +583,7 @@ function EvidenceUploader({
 
                     key={`${file.name}-${index}`}
 
-                    className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900 p-4"
+                    className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-slate-800/40 p-4 backdrop-blur-sm"
 
                   >
 
@@ -646,7 +646,7 @@ function EvidenceUploader({
                 processing
               }
 
-              className="mt-8 rounded-lg bg-green-600 px-8 py-3 font-semibold transition hover:bg-green-500 disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-8 rounded-lg bg-gradient-to-r from-emerald-600 to-cyan-600 px-8 py-3 font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:from-emerald-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
 
             >
 
@@ -676,9 +676,9 @@ function EvidenceUploader({
 
       {error && (
 
-        <div className="mt-8 rounded-lg border border-red-800 bg-red-950 p-5 text-red-300">
+        <div className="mt-8 rounded-lg border border-red-500/30 bg-red-500/10 p-5 text-red-400">
 
-          🔴 {error}
+          {error}
 
         </div>
 

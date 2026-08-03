@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import AppLayout from "../components/layout/AppLayout";
+
 import AnalysisSelector
     from "../components/AnalysisSelector";
 
@@ -163,44 +165,22 @@ function Investigation() {
 
     return (
 
-        <div className="min-h-screen bg-slate-950 text-white">
-
-
-            {/* ================================= */}
-            {/* HEADER */}
-            {/* ================================= */}
-
-            <nav className="border-b border-slate-800 px-8 py-5">
-
-                <h1 className="text-2xl font-bold">
-
-                    AI-FORGE
-
-                </h1>
-
-
-                <p className="text-sm text-slate-400">
-
-                    Multimodal Fraud Investigation
-
-                </p>
-
-            </nav>
-
+        <AppLayout
+            title="Evidence Investigation"
+            subtitle="Upload digital evidence and run AI-powered forensic analysis"
+        >
 
             {/* ================================= */}
-            {/* MAIN */}
+            {/* PAGE HEADER                       */}
             {/* ================================= */}
 
-            <main className="mx-auto max-w-7xl px-8 py-12">
+            <div className="mb-8">
 
-
-                <h2 className="text-4xl font-bold">
+                <h2 className="text-3xl font-bold tracking-tight text-white md:text-4xl">
 
                     Evidence Investigation
 
                 </h2>
-
 
                 <p className="mt-3 text-slate-400">
 
@@ -209,257 +189,257 @@ function Investigation() {
 
                 </p>
 
-
-                {/* ================================= */}
-                {/* ANALYSIS SELECTOR */}
-                {/* ================================= */}
-
-                <AnalysisSelector
-
-                    analysisType={
-
-                        analysisType
-
-                    }
-
-                    setAnalysisType={
-
-                        handleAnalysisTypeChange
-
-                    }
-
-                />
+            </div>
 
 
-                {/* ================================= */}
-                {/* IMAGE FORENSICS */}
-                {/* ================================= */}
+            {/* ================================= */}
+            {/* ANALYSIS SELECTOR                 */}
+            {/* ================================= */}
 
-                {analysisType === "image" && (
+            <AnalysisSelector
 
-                    <>
+                analysisType={
 
-                        <EvidenceUploader
+                    analysisType
 
-                            files={
+                }
 
-                                files
+                setAnalysisType={
 
-                            }
+                    handleAnalysisTypeChange
 
-                            setFiles={
+                }
 
-                                setFiles
-
-                            }
-
-                            processing={
-
-                                processing
-
-                            }
-
-                            setProcessing={
-
-                                setProcessing
-
-                            }
-
-                            setResults={
-
-                                setResults
-
-                            }
-
-                            error={
-
-                                error
-
-                            }
-
-                            setError={
-
-                                setError
-
-                            }
-
-                            analysisType={
-
-                                analysisType
-
-                            }
-
-                        />
+            />
 
 
-                        <ImageForensics
+            {/* ================================= */}
+            {/* IMAGE FORENSICS                   */}
+            {/* ================================= */}
 
-                            files={
+            {analysisType === "image" && (
 
-                                files
+                <>
 
-                            }
+                    <EvidenceUploader
 
-                            results={
+                        files={
 
-                                imageResults
+                            files
 
-                            }
+                        }
 
-                        />
+                        setFiles={
 
-                    </>
+                            setFiles
 
-                )}
+                        }
 
+                        processing={
 
-                {/* ================================= */}
-                {/* SIGNATURE VERIFICATION */}
-                {/* ================================= */}
+                            processing
 
-                {analysisType === "signature" && (
+                        }
 
-                    <SignatureVerification
+                        setProcessing={
 
-                        onResult={
+                            setProcessing
 
-                            setSignatureResult
+                        }
+
+                        setResults={
+
+                            setResults
+
+                        }
+
+                        error={
+
+                            error
+
+                        }
+
+                        setError={
+
+                            setError
+
+                        }
+
+                        analysisType={
+
+                            analysisType
 
                         }
 
                     />
 
-                )}
 
+                    <ImageForensics
 
-                {/* ================================= */}
-                {/* DOCUMENT FORENSICS */}
-                {/* ================================= */}
+                        files={
 
-                {analysisType === "document" && (
+                            files
 
-                    <>
+                        }
 
-                        <EvidenceUploader
-
-                            files={
-
-                                files
-
-                            }
-
-                            setFiles={
-
-                                setFiles
-
-                            }
-
-                            processing={
-
-                                processing
-
-                            }
-
-                            setProcessing={
-
-                                setProcessing
-
-                            }
-
-                            setResults={
-
-                                setResults
-
-                            }
-
-                            error={
-
-                                error
-
-                            }
-
-                            setError={
-
-                                setError
-
-                            }
-
-                            analysisType={
-
-                                analysisType
-
-                            }
-
-                        />
-
-
-                        <DocumentForensics
-
-                            result={
-
-                                documentAnalysis
-
-                            }
-
-                        />
-
-                    </>
-
-                )}
-
-
-                {/* ================================= */}
-                {/* VIDEO FORENSICS */}
-                {/* ================================= */}
-
-                {analysisType === "video" && (
-
-                    <VideoForensics
-                        onResult={setVideoResult}
-                    />
-
-                )}
-
-
-                {/* ================================= */}
-                {/* UNIFIED FRAUD DASHBOARD */}
-                {/* ================================= */}
-
-                {analysisType === "dashboard" && (
-
-                    <UnifiedFraudDashboard
-
-                        imageResults={
+                        results={
 
                             imageResults
 
                         }
 
-                        documentResult={
+                    />
 
-                            documentAnalysis
+                </>
+
+            )}
+
+
+            {/* ================================= */}
+            {/* SIGNATURE VERIFICATION            */}
+            {/* ================================= */}
+
+            {analysisType === "signature" && (
+
+                <SignatureVerification
+
+                    onResult={
+
+                        setSignatureResult
+
+                    }
+
+                />
+
+            )}
+
+
+            {/* ================================= */}
+            {/* DOCUMENT FORENSICS                */}
+            {/* ================================= */}
+
+            {analysisType === "document" && (
+
+                <>
+
+                    <EvidenceUploader
+
+                        files={
+
+                            files
 
                         }
 
-                        signatureResult={
+                        setFiles={
 
-                            signatureResult
+                            setFiles
 
                         }
 
-                        videoResult={
+                        processing={
 
-                            videoResult
+                            processing
+
+                        }
+
+                        setProcessing={
+
+                            setProcessing
+
+                        }
+
+                        setResults={
+
+                            setResults
+
+                        }
+
+                        error={
+
+                            error
+
+                        }
+
+                        setError={
+
+                            setError
+
+                        }
+
+                        analysisType={
+
+                            analysisType
 
                         }
 
                     />
 
-                )}
 
-            </main>
+                    <DocumentForensics
 
-        </div>
+                        result={
+
+                            documentAnalysis
+
+                        }
+
+                    />
+
+                </>
+
+            )}
+
+
+            {/* ================================= */}
+            {/* VIDEO FORENSICS                   */}
+            {/* ================================= */}
+
+            {analysisType === "video" && (
+
+                <VideoForensics
+                    onResult={setVideoResult}
+                />
+
+            )}
+
+
+            {/* ================================= */}
+            {/* UNIFIED FRAUD DASHBOARD           */}
+            {/* ================================= */}
+
+            {analysisType === "dashboard" && (
+
+                <UnifiedFraudDashboard
+
+                    imageResults={
+
+                        imageResults
+
+                    }
+
+                    documentResult={
+
+                        documentAnalysis
+
+                    }
+
+                    signatureResult={
+
+                        signatureResult
+
+                    }
+
+                    videoResult={
+
+                        videoResult
+
+                    }
+
+                />
+
+            )}
+
+        </AppLayout>
 
     );
 

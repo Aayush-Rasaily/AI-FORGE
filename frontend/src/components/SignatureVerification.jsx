@@ -1,549 +1,403 @@
 import { useState } from "react";
+import { Upload, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+
+import GlassCard from "./ui/GlassCard";
+import StatusBadge from "./ui/StatusBadge";
+import ProgressBar from "./ui/ProgressBar";
 
 import {
-  verifySignature
+    verifySignature
 } from "../services/api";
 
 
-function SignatureVerification() {
+export default function SignatureVerification({ onResult }) {
 
+    const [
+        referenceFile,
+        setReferenceFile
+    ] = useState(null);
 
-  // ==========================================
-  // STATE
-  // ==========================================
 
-  const [
-    referenceFile,
-    setReferenceFile
-  ] = useState(null);
+    const [
+        queryFile,
+        setQueryFile
+    ] = useState(null);
 
 
-  const [
-    queryFile,
-    setQueryFile
-  ] = useState(null);
+    const [
+        result,
+        setResult
+    ] = useState(null);
 
 
-  const [
-    signatureResult,
-    setSignatureResult
-  ] = useState(null);
+    const [
+        loading,
+        setLoading
+    ] = useState(false);
 
 
-  const [
-    signatureLoading,
-    setSignatureLoading
-  ] = useState(false);
+    const [
+        error,
+        setError
+    ] = useState("");
 
 
-  const [
-    signatureError,
-    setSignatureError
-  ] = useState("");
+    async function handleVerify() {
 
+        if (
+            !referenceFile ||
+            !queryFile
+        ) {
 
-  // ==========================================
-  // VERIFY
-  // ==========================================
+            setError(
+                "Please upload both signatures."
+            );
 
-  const handleSignatureVerification =
-    async () => {
+            return;
+        }
 
 
-      if (!referenceFile) {
+        try {
 
-        setSignatureError(
-          "Please upload a reference signature."
-        );
+            setLoading(true);
 
-        return;
+            setError("");
 
-      }
+            setResult(null);
 
 
-      if (!queryFile) {
+            const data =
+                await verifySignature(
 
-        setSignatureError(
-          "Please upload a query signature."
-        );
+                    referenceFile,
 
-        return;
+                    queryFile
 
-      }
+                );
 
 
-      setSignatureLoading(
-        true
-      );
+            setResult(data.result);
 
-      setSignatureError("");
+            setResult(data.analysis);
 
-      setSignatureResult(
-        null
-      );
+            if (onResult) {
+                onResult(data.analysis);
+            }
 
+        } catch (err) {
 
-      try {
+            setError(
+                err.message
+            );
 
-        const response =
-          await verifySignature(
+        } finally {
 
-            referenceFile,
+            setLoading(false);
 
-            queryFile
+        }
 
-          );
+    }
 
 
-        setSignatureResult(
+    return (
 
-          response.analysis
+        <div>
 
-        );
+            {/* ================================= */}
+            {/* PAGE HEADER (when standalone)     */}
+            {/* ================================= */}
 
+            {!onResult && (
 
-      } catch (error) {
+                <div className="mb-8">
 
-        console.error(
+                    <h2 className="text-3xl font-bold tracking-tight text-white md:text-4xl">
 
-          "Signature verification error:",
+                        Signature Verification
 
-          error
+                    </h2>
 
-        );
+                    <p className="mt-3 text-slate-400">
 
+                        Compare a reference signature against a suspected
+                        signature using the AI-FORGE Siamese Network.
 
-        setSignatureError(
+                    </p>
 
-          error.message ||
+                </div>
 
-          "Signature verification failed."
+            )}
 
-        );
 
+            {/* ================================= */}
+            {/* UPLOAD GRID                       */}
+            {/* ================================= */}
 
-      } finally {
+            <div className="grid gap-6 md:grid-cols-2">
 
-        setSignatureLoading(
-          false
-        );
 
-      }
+                {/* Reference Signature */}
 
-    };
+                <GlassCard gradient="purple">
 
+                    <h2 className="text-lg font-semibold text-white mb-4">
 
-  // ==========================================
-  // RESET
-  // ==========================================
+                        Reference Signature
 
-  const resetSignatureVerification =
-    () => {
+                    </h2>
 
-      setReferenceFile(
-        null
-      );
 
-      setQueryFile(
-        null
-      );
+                    <div className="upload-zone rounded-xl p-6 text-center">
 
-      setSignatureResult(
-        null
-      );
+                        <Upload className="mx-auto h-8 w-8 text-slate-500" />
 
-      setSignatureError(
-        ""
-      );
+                        <label className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-lg bg-purple-600/80 px-4 py-2 text-sm font-semibold text-white transition hover:bg-purple-500">
 
-    };
+                            Select Reference
 
+                            <input
+                                type="file"
+                                accept=".png,.jpg,.jpeg"
+                                onChange={(e) =>
+                                    setReferenceFile(
+                                        e.target.files[0]
+                                    )
+                                }
+                                className="hidden"
+                            />
 
-  return (
+                        </label>
 
-    <div className="mt-10 rounded-xl border border-slate-800 bg-slate-900 p-8">
+                    </div>
 
 
-      <h3 className="text-2xl font-bold">
-        Signature Verification
-      </h3>
+                    {referenceFile && (
 
+                        <p className="mt-3 flex items-center gap-2 text-sm text-emerald-400">
 
-      <p className="mt-2 text-slate-400">
+                            <CheckCircle className="h-4 w-4" />
 
-        Compare a reference signature against
-        a query signature using the trained
-        Siamese Neural Network.
+                            {referenceFile.name}
 
-      </p>
+                        </p>
 
+                    )}
 
-      {/* FILES */}
+                </GlassCard>
 
-      <div className="mt-8 grid gap-6 md:grid-cols-2">
 
+                {/* Query Signature */}
 
-        {/* REFERENCE */}
+                <GlassCard gradient="blue">
 
-        <div className="rounded-xl border border-slate-700 bg-slate-950 p-6">
+                    <h2 className="text-lg font-semibold text-white mb-4">
 
-          <h4 className="font-semibold">
-            Reference Signature
-          </h4>
+                        Signature to Verify
 
+                    </h2>
 
-          <p className="mt-2 text-sm text-slate-400">
-            Upload a known genuine signature.
-          </p>
 
+                    <div className="upload-zone rounded-xl p-6 text-center">
 
-          <input
+                        <Upload className="mx-auto h-8 w-8 text-slate-500" />
 
-            type="file"
+                        <label className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-lg bg-blue-600/80 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-500">
 
-            accept="image/png,image/jpeg,image/jpg"
+                            Select Query
 
-            onChange={(event) => {
+                            <input
+                                type="file"
+                                accept=".png,.jpg,.jpeg"
+                                onChange={(e) =>
+                                    setQueryFile(
+                                        e.target.files[0]
+                                    )
+                                }
+                                className="hidden"
+                            />
 
-              setReferenceFile(
+                        </label>
 
-                event.target.files[0] ||
-                null
+                    </div>
 
-              );
 
-              setSignatureResult(
-                null
-              );
+                    {queryFile && (
 
-            }}
+                        <p className="mt-3 flex items-center gap-2 text-sm text-emerald-400">
 
-            className="mt-5 block w-full text-sm text-slate-400"
+                            <CheckCircle className="h-4 w-4" />
 
-          />
+                            {queryFile.name}
 
+                        </p>
 
-          {referenceFile && (
+                    )}
 
-            <div className="mt-5">
+                </GlassCard>
 
-              <img
+            </div>
 
-                src={URL.createObjectURL(
-                  referenceFile
+
+            {/* ================================= */}
+            {/* VERIFY BUTTON                     */}
+            {/* ================================= */}
+
+            <button
+
+                onClick={handleVerify}
+
+                disabled={loading}
+
+                className="mt-6 inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-purple-600 to-blue-600 px-6 py-3 font-semibold text-white shadow-lg shadow-purple-500/20 transition hover:from-purple-500 hover:to-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+
+            >
+
+                {loading ? (
+                    <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Verifying...
+                    </>
+                ) : (
+                    "Verify Signature"
                 )}
 
-                alt="Reference Signature"
-
-                className="h-48 w-full rounded-lg bg-white object-contain"
-
-              />
+            </button>
 
 
-              <p className="mt-2 text-xs text-slate-500">
-                {referenceFile.name}
-              </p>
+            {loading && (
 
-            </div>
+                <div className="mt-4 max-w-md">
 
-          )}
+                    <ProgressBar
+                        value={75}
+                        label="Running Siamese network inference..."
+                        color="purple"
+                    />
+
+                </div>
+
+            )}
+
+
+            {/* ================================= */}
+            {/* ERROR                             */}
+            {/* ================================= */}
+
+            {error && (
+
+                <div className="mt-6 flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-red-400">
+
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+
+                    {error}
+
+                </div>
+
+            )}
+
+
+            {/* ================================= */}
+            {/* RESULT                            */}
+            {/* ================================= */}
+
+            {result && (
+
+                <GlassCard gradient="green" className="mt-8">
+
+                    <div className="flex items-center justify-between mb-6">
+
+                        <h2 className="text-xl font-bold text-white">
+
+                            Verification Result
+
+                        </h2>
+
+                        <StatusBadge status={result.verdict} />
+
+                    </div>
+
+
+                    <div className="grid gap-6 md:grid-cols-3">
+
+
+                        <div className="rounded-lg bg-slate-800/50 p-5">
+
+                            <p className="text-sm text-slate-400">
+
+                                Verdict
+
+                            </p>
+
+                            <p className="mt-2 text-2xl font-bold text-white">
+
+                                {result.verdict}
+
+                            </p>
+
+                        </div>
+
+
+                        <div className="rounded-lg bg-slate-800/50 p-5">
+
+                            <p className="text-sm text-slate-400">
+
+                                Similarity
+
+                            </p>
+
+                            <p className="mt-2 text-2xl font-bold text-white">
+
+                                {(
+                                    result.similarity
+                                    * 100
+                                ).toFixed(2)}%
+
+                            </p>
+
+                            <ProgressBar
+                                value={result.similarity * 100}
+                                color="blue"
+                                showPercent={false}
+                                className="mt-3"
+                            />
+
+                        </div>
+
+
+                        <div className="rounded-lg bg-slate-800/50 p-5">
+
+                            <p className="text-sm text-slate-400">
+
+                                Confidence
+
+                            </p>
+
+                            <p className="mt-2 text-2xl font-bold text-white">
+
+                                {(
+                                    result.confidence
+                                    * 100
+                                ).toFixed(2)}%
+
+                            </p>
+
+                            <ProgressBar
+                                value={result.confidence * 100}
+                                color="purple"
+                                showPercent={false}
+                                className="mt-3"
+                            />
+
+                        </div>
+
+                    </div>
+
+                </GlassCard>
+
+            )}
 
         </div>
 
-
-        {/* QUERY */}
-
-        <div className="rounded-xl border border-slate-700 bg-slate-950 p-6">
-
-          <h4 className="font-semibold">
-            Query Signature
-          </h4>
-
-
-          <p className="mt-2 text-sm text-slate-400">
-            Upload the signature you want
-            to verify.
-          </p>
-
-
-          <input
-
-            type="file"
-
-            accept="image/png,image/jpeg,image/jpg"
-
-            onChange={(event) => {
-
-              setQueryFile(
-
-                event.target.files[0] ||
-                null
-
-              );
-
-              setSignatureResult(
-                null
-              );
-
-            }}
-
-            className="mt-5 block w-full text-sm text-slate-400"
-
-          />
-
-
-          {queryFile && (
-
-            <div className="mt-5">
-
-              <img
-
-                src={URL.createObjectURL(
-                  queryFile
-                )}
-
-                alt="Query Signature"
-
-                className="h-48 w-full rounded-lg bg-white object-contain"
-
-              />
-
-
-              <p className="mt-2 text-xs text-slate-500">
-                {queryFile.name}
-              </p>
-
-            </div>
-
-          )}
-
-        </div>
-
-      </div>
-
-
-      {/* ERROR */}
-
-      {signatureError && (
-
-        <div className="mt-6 rounded-lg border border-red-800 bg-red-950 p-4 text-red-300">
-
-          🔴 {signatureError}
-
-        </div>
-
-      )}
-
-
-      {/* BUTTONS */}
-
-      <div className="mt-8 flex gap-4">
-
-
-        <button
-
-          onClick={
-            handleSignatureVerification
-          }
-
-          disabled={
-            signatureLoading
-          }
-
-          className="rounded-lg bg-purple-600 px-8 py-3 font-semibold transition hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
-
-        >
-
-          {signatureLoading
-
-            ? "Verifying Signature..."
-
-            : "Verify Signature"
-
-          }
-
-        </button>
-
-
-        <button
-
-          onClick={
-            resetSignatureVerification
-          }
-
-          className="rounded-lg border border-slate-700 px-8 py-3 font-semibold transition hover:bg-slate-800"
-
-        >
-
-          Reset
-
-        </button>
-
-      </div>
-
-
-      {/* RESULT */}
-
-      {signatureResult && (
-
-        <div className="mt-10 rounded-xl border border-slate-700 bg-slate-950 p-8">
-
-
-          <h3 className="text-2xl font-bold">
-            Signature Verification Result
-          </h3>
-
-
-          {/* VERDICT */}
-
-          <div className="mt-8">
-
-            <p className="text-sm text-slate-400">
-              Verdict
-            </p>
-
-
-            <p className={`mt-2 text-3xl font-bold ${
-              signatureResult.verdict ===
-              "Genuine"
-
-                ? "text-green-400"
-
-                : "text-red-400"
-
-            }`}>
-
-              {signatureResult.verdict}
-
-            </p>
-
-          </div>
-
-
-          {/* METRICS */}
-
-          <div className="mt-8 grid gap-6 md:grid-cols-2">
-
-
-            <div className="rounded-lg bg-slate-900 p-6">
-
-              <p className="text-sm text-slate-400">
-                Similarity
-              </p>
-
-
-              <p className="mt-2 text-3xl font-bold">
-
-                {(
-                  signatureResult.similarity *
-
-                  100
-
-                ).toFixed(2)}%
-
-              </p>
-
-            </div>
-
-
-            <div className="rounded-lg bg-slate-900 p-6">
-
-              <p className="text-sm text-slate-400">
-                Confidence
-              </p>
-
-
-              <p className="mt-2 text-3xl font-bold">
-
-                {(
-                  signatureResult.confidence *
-
-                  100
-
-                ).toFixed(2)}%
-
-              </p>
-
-            </div>
-
-          </div>
-
-
-          {/* SIMILARITY BAR */}
-
-          <div className="mt-8">
-
-            <div className="flex justify-between">
-
-              <p className="text-sm text-slate-400">
-                Similarity Score
-              </p>
-
-
-              <p className="text-sm text-slate-400">
-
-                {(
-                  signatureResult.similarity *
-
-                  100
-
-                ).toFixed(2)}%
-
-              </p>
-
-            </div>
-
-
-            <div className="mt-3 h-4 overflow-hidden rounded-full bg-slate-800">
-
-              <div
-
-                className={`h-full ${
-                  signatureResult.verdict ===
-                  "Genuine"
-
-                    ? "bg-green-500"
-
-                    : "bg-red-500"
-
-                }`}
-
-                style={{
-
-                  width:
-
-                    `${Math.max(
-
-                      0,
-
-                      Math.min(
-
-                        signatureResult.similarity *
-
-                        100,
-
-                        100
-
-                      )
-
-                    )}%`
-
-                }}
-
-              />
-
-            </div>
-
-          </div>
-
-        </div>
-
-      )}
-
-    </div>
-
-  );
+    );
 
 }
-
-export default SignatureVerification;

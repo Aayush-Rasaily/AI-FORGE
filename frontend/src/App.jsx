@@ -4,6 +4,7 @@ import Dashboard from "./pages/Dashboard";
 import Investigation from "./pages/Investigation";
 import SignatureVerification from "./pages/SignatureVerification";
 import CopyMoveDetection from "./pages/CopyMoveDetection";
+
 function App() {
 
   return (
@@ -29,22 +30,23 @@ function App() {
           element={<SignatureVerification />}
         />
 
-        {/* Unknown routes */}
-        <Route
-          path="*"
-          element={<Navigate to="/" replace />}
-        />
-
-        {/* Copy Move Detection */}
+        {/* Copy Move Detection — must be before catch-all */}
         <Route
           path="/copy-move"
           element={<CopyMoveDetection />}
+        />
+
+        {/* Unknown routes — catch-all must be last */}
+        <Route
+          path="*"
+          element={<Navigate to="/" replace />}
         />
 
       </Routes>
 
     </BrowserRouter>
   );
+
 }
 
 export default App;

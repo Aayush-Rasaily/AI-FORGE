@@ -29,3 +29,4 @@ dist-ssr
 
 # Model weights directory
 backend/models/signature/weights/
+
