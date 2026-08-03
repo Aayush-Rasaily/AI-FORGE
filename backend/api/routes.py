@@ -35,6 +35,41 @@ from backend.analysis.copy_move import (
     detect_copy_move
 )
 
+from backend.analysis.metadata_analysis import (
+    analyze_metadata
+)
+
+from backend.analysis.noise_analysis import (
+    analyze_noise
+)
+
+from backend.document_analysis.text_layout_analysis import (
+    analyze_text_layout
+)
+
+from backend.document_analysis.font_consistency import (
+    analyze_font_consistency
+)
+
+from backend.document_analysis.spacing_analysis import (
+    analyze_spacing
+)
+
+from backend.document_analysis.region_anomaly import (
+    analyze_region_anomaly
+)
+
+from backend.document_analysis.heatmap_generator import (
+    generate_heatmap
+)
+
+from backend.document_analysis.risk_engine import (
+    analyze_document_risk
+)
+
+from backend.document_analysis.report_generator import (
+    generate_report
+)
 
 # ============================================================
 # ROUTER

@@ -8,10 +8,28 @@ def detect_copy_move(
     image_path,
     output_dir=None
 ):
+    """
+    Detect possible copy-move forgery using ORB
+    feature matching with spatial separation.
 
-    # -----------------------------------------
-    # Read image
-    # -----------------------------------------
+    The detector looks for similar local features
+    appearing at different spatial locations in
+    the same image.
+
+    Returns:
+        dict containing:
+        - verdict
+        - copy_move_detected
+        - copy_move_score
+        - matched_points
+        - inliers
+        - spatial_matches
+        - artifact
+    """
+
+    # ==========================================
+    # READ IMAGE
+    # ==========================================
 
     image = cv2.imread(
         str(image_path)
@@ -20,13 +38,13 @@ def detect_copy_move(
     if image is None:
 
         raise ValueError(
-            "Unable to read image"
+            f"Unable to read image: {image_path}"
         )
 
 
-    # -----------------------------------------
-    # Prepare artifact path
-    # -----------------------------------------
+    # ==========================================
+    # PREPARE ARTIFACT PATH
+    # ==========================================
 
     artifact_path = None
 
@@ -50,9 +68,9 @@ def detect_copy_move(
         )
 
 
-    # -----------------------------------------
-    # Default result
-    # -----------------------------------------
+    # ==========================================
+    # DEFAULT RESULT
+    # ==========================================
 
     result = {
 
@@ -62,12 +80,16 @@ def detect_copy_move(
         "copy_move_detected":
             False,
 
-        "copy_move_score": 0.0,
+        "copy_move_score":
+            0.0,
 
         "matched_points":
             0,
 
         "inliers":
+            0,
+
+        "spatial_matches":
             0,
 
         "artifact":
@@ -78,9 +100,9 @@ def detect_copy_move(
     }
 
 
-    # -----------------------------------------
-    # Convert to grayscale
-    # -----------------------------------------
+    # ==========================================
+    # CONVERT TO GRAYSCALE
+    # ==========================================
 
     gray = cv2.cvtColor(
 
@@ -91,13 +113,23 @@ def detect_copy_move(
     )
 
 
-    # -----------------------------------------
-    # ORB
-    # -----------------------------------------
+    # ==========================================
+    # ORB FEATURE DETECTION
+    # ==========================================
 
     orb = cv2.ORB_create(
 
-        nfeatures=5000
+        nfeatures=10000,
+
+        scaleFactor=1.2,
+
+        nlevels=8,
+
+        edgeThreshold=31,
+
+        patchSize=31,
+
+        fastThreshold=10
 
     )
 
@@ -115,11 +147,19 @@ def detect_copy_move(
     )
 
 
-    # -----------------------------------------
-    # If no features
-    # -----------------------------------------
+    # ==========================================
+    # CHECK FEATURES
+    # ==========================================
 
-    if descriptors is None:
+    if (
+
+        descriptors is None
+
+        or
+
+        len(keypoints) < 10
+
+    ):
 
         if artifact_path:
 
@@ -134,9 +174,9 @@ def detect_copy_move(
         return result
 
 
-    # -----------------------------------------
-    # BF Matcher
-    # -----------------------------------------
+    # ==========================================
+    # BF MATCHER
+    # ==========================================
 
     matcher = cv2.BFMatcher(
 
@@ -147,58 +187,180 @@ def detect_copy_move(
     )
 
 
+    # ==========================================
+    # SELF MATCHING
+    #
+    # We still compare descriptors within the
+    # same image, but we explicitly remove:
+    #
+    # 1. Self matches
+    # 2. Spatially-near matches
+    #
+    # This is important for copy-move detection.
+    # ==========================================
+
     matches = matcher.knnMatch(
 
         descriptors,
 
         descriptors,
 
-        k=2
+        k=3
 
     )
 
 
-    # -----------------------------------------
-    # Ratio Test
-    # -----------------------------------------
+    # ==========================================
+    # CONFIGURATION
+    # ==========================================
+
+    RATIO_THRESHOLD = 0.70
+
+    MIN_SPATIAL_DISTANCE = 50
 
     good_matches = []
 
 
+    # ==========================================
+    # RATIO TEST + SPATIAL SEPARATION
+    # ==========================================
+
     for pair in matches:
 
-        if len(pair) < 2:
+        if len(pair) < 3:
 
             continue
 
 
-        m, n = pair
+        m = pair[0]
 
+        n = pair[1]
+
+        p = pair[2]
+
+
+        # --------------------------------------
+        # REMOVE SELF MATCH
+        # --------------------------------------
+
+        if (
+
+            m.queryIdx
+
+            ==
+
+            m.trainIdx
+
+        ):
+
+            # Find the first non-self candidate
+
+            candidates = [
+
+                match
+
+                for match in pair
+
+                if match.queryIdx
+                !=
+                match.trainIdx
+
+            ]
+
+            if len(candidates) < 2:
+
+                continue
+
+            m = candidates[0]
+
+            n = candidates[1]
+
+
+        # --------------------------------------
+        # RATIO TEST
+        # --------------------------------------
 
         if (
 
             m.distance
 
-            <
+            >=
 
-            0.75 * n.distance
+            RATIO_THRESHOLD * n.distance
 
         ):
 
-            if (
+            continue
 
+
+        # --------------------------------------
+        # GET KEYPOINT LOCATIONS
+        # --------------------------------------
+
+        point1 = np.array(
+
+            keypoints[
                 m.queryIdx
+            ].pt
 
-                !=
+        )
 
+
+        point2 = np.array(
+
+            keypoints[
                 m.trainIdx
+            ].pt
 
-            ):
-
-                good_matches.append(m)
+        )
 
 
-    # Update matched points
+        # --------------------------------------
+        # SPATIAL DISTANCE
+        # --------------------------------------
+
+        spatial_distance = np.linalg.norm(
+
+            point1
+
+            -
+
+            point2
+
+        )
+
+
+        # --------------------------------------
+        # REMOVE LOCAL / NEARBY MATCHES
+        #
+        # A genuine copy-move region should
+        # generally appear at a different
+        # spatial location.
+        # --------------------------------------
+
+        if (
+
+            spatial_distance
+
+            <
+
+            MIN_SPATIAL_DISTANCE
+
+        ):
+
+            continue
+
+
+        good_matches.append(
+
+            m
+
+        )
+
+
+    # ==========================================
+    # MATCHED POINT COUNT
+    # ==========================================
 
     result["matched_points"] = (
 
@@ -206,10 +368,16 @@ def detect_copy_move(
 
     )
 
+    result["spatial_matches"] = (
 
-    # -----------------------------------------
-    # Not enough matches
-    # -----------------------------------------
+        len(good_matches)
+
+    )
+
+
+    # ==========================================
+    # NOT ENOUGH MATCHES
+    # ==========================================
 
     if len(good_matches) < 4:
 
@@ -226,17 +394,17 @@ def detect_copy_move(
         return result
 
 
-    # -----------------------------------------
-    # Extract points
-    # -----------------------------------------
+    # ==========================================
+    # EXTRACT MATCH POINTS
+    # ==========================================
 
     src_pts = np.float32([
 
         keypoints[
-            m.queryIdx
+            match.queryIdx
         ].pt
 
-        for m in good_matches
+        for match in good_matches
 
     ]).reshape(
 
@@ -252,10 +420,10 @@ def detect_copy_move(
     dst_pts = np.float32([
 
         keypoints[
-            m.trainIdx
+            match.trainIdx
         ].pt
 
-        for m in good_matches
+        for match in good_matches
 
     ]).reshape(
 
@@ -268,28 +436,44 @@ def detect_copy_move(
     )
 
 
-    # -----------------------------------------
-    # RANSAC
-    # -----------------------------------------
+    # ==========================================
+    # RANSAC HOMOGRAPHY
+    # ==========================================
 
-    homography, mask = cv2.findHomography(
+    try:
 
-        src_pts,
+        homography, mask = cv2.findHomography(
 
-        dst_pts,
+            src_pts,
 
-        cv2.RANSAC,
+            dst_pts,
 
-        5.0
+            cv2.RANSAC,
 
-    )
+            5.0
+
+        )
+
+    except cv2.error:
+
+        homography = None
+
+        mask = None
 
 
-    # -----------------------------------------
-    # Homography failed
-    # -----------------------------------------
+    # ==========================================
+    # HOMOGRAPHY FAILED
+    # ==========================================
 
-    if mask is None:
+    if (
+
+        homography is None
+
+        or
+
+        mask is None
+
+    ):
 
         if artifact_path:
 
@@ -304,9 +488,9 @@ def detect_copy_move(
         return result
 
 
-    # -----------------------------------------
-    # Inliers
-    # -----------------------------------------
+    # ==========================================
+    # RANSAC INLIERS
+    # ==========================================
 
     inliers = int(
 
@@ -315,16 +499,22 @@ def detect_copy_move(
     )
 
 
-    result["inliers"] = inliers
+    result["inliers"] = (
+
+        inliers
+
+    )
 
 
-    # -----------------------------------------
-    # Score
-    # -----------------------------------------
+    # ==========================================
+    # COPY-MOVE SCORE
+    # ==========================================
 
     score = (
 
-        inliers /
+        inliers
+
+        /
 
         max(
 
@@ -338,18 +528,34 @@ def detect_copy_move(
 
 
     result["copy_move_score"] = round(
-    float(score),
-    4
+
+        float(score),
+
+        4
+
     )
 
 
-    # -----------------------------------------
-    # Detection
-    # -----------------------------------------
+    # ==========================================
+    # DETECTION THRESHOLD
+    #
+    # We require both:
+    #
+    # - Minimum number of spatial matches
+    # - Minimum RANSAC inliers
+    # - Minimum inlier ratio
+    #
+    # This avoids declaring forgery from
+    # a few random matches.
+    # ==========================================
 
     copy_move_detected = (
 
-        inliers >= 10
+        len(good_matches) >= 10
+
+        and
+
+        inliers >= 8
 
         and
 
@@ -365,6 +571,10 @@ def detect_copy_move(
     )
 
 
+    # ==========================================
+    # VERDICT
+    # ==========================================
+
     if copy_move_detected:
 
         result["verdict"] = (
@@ -374,22 +584,26 @@ def detect_copy_move(
         )
 
 
-    # -----------------------------------------
-    # Create visualization
-    # -----------------------------------------
+    # ==========================================
+    # VISUALIZATION
+    # ==========================================
 
     visualization = image.copy()
 
 
-    for i, match in enumerate(
+    for index, match in enumerate(
 
         good_matches
 
     ):
 
-        if mask[i]:
+        # --------------------------------------
+        # Only draw RANSAC inliers
+        # --------------------------------------
 
-            x, y = map(
+        if mask[index]:
+
+            x1, y1 = map(
 
                 int,
 
@@ -400,13 +614,28 @@ def detect_copy_move(
             )
 
 
+            x2, y2 = map(
+
+                int,
+
+                keypoints[
+                    match.trainIdx
+                ].pt
+
+            )
+
+
+            # ----------------------------------
+            # Draw source point
+            # ----------------------------------
+
             cv2.circle(
 
                 visualization,
 
-                (x, y),
+                (x1, y1),
 
-                8,
+                6,
 
                 (0, 0, 255),
 
@@ -415,9 +644,47 @@ def detect_copy_move(
             )
 
 
-    # -----------------------------------------
-    # Save artifact
-    # -----------------------------------------
+            # ----------------------------------
+            # Draw destination point
+            # ----------------------------------
+
+            cv2.circle(
+
+                visualization,
+
+                (x2, y2),
+
+                6,
+
+                (0, 255, 0),
+
+                -1
+
+            )
+
+
+            # ----------------------------------
+            # Connect duplicated regions
+            # ----------------------------------
+
+            cv2.line(
+
+                visualization,
+
+                (x1, y1),
+
+                (x2, y2),
+
+                (255, 0, 0),
+
+                1
+
+            )
+
+
+    # ==========================================
+    # SAVE ARTIFACT
+    # ==========================================
 
     if artifact_path:
 
@@ -428,6 +695,71 @@ def detect_copy_move(
             visualization
 
         )
+
+
+    # ==========================================
+    # DEBUG
+    # ==========================================
+
+    print(
+
+        "\n========== COPY-MOVE RESULT =========="
+
+    )
+
+    print(
+
+        "Image:",
+
+        image_path
+
+    )
+
+    print(
+
+        "Keypoints:",
+
+        len(keypoints)
+
+    )
+
+    print(
+
+        "Spatial Matches:",
+
+        len(good_matches)
+
+    )
+
+    print(
+
+        "RANSAC Inliers:",
+
+        inliers
+
+    )
+
+    print(
+
+        "Copy-Move Score:",
+
+        result["copy_move_score"]
+
+    )
+
+    print(
+
+        "Detected:",
+
+        copy_move_detected
+
+    )
+
+    print(
+
+        "======================================\n"
+
+    )
 
 
     return result

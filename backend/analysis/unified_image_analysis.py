@@ -8,15 +8,147 @@ from backend.analysis.copy_move import (
     detect_copy_move
 )
 
+from backend.analysis.metadata_analysis import (
+    analyze_metadata
+)
 
-def analyze_image_unified(
-    image_path,
-    analysis_dir
+from backend.analysis.noise_analysis import (
+    analyze_noise
+)
+
+from backend.document_analysis.font_consistency import (
+    analyze_font_consistency
+)
+
+from backend.document_analysis.spacing_analysis import (
+    analyze_spacing
+)
+
+from backend.document_analysis.region_anomaly import (
+    analyze_region_anomaly
+)
+
+from backend.document_analysis.evidence import (
+    Evidence
+)
+
+from backend.document_analysis.evidence_fusion import (
+    fuse_evidence
+)
+
+
+# ============================================================
+# SAFE FLOAT
+# ============================================================
+
+def safe_float(value, default=0.0):
+
+    try:
+
+        return float(value)
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return default
+
+
+# ============================================================
+# SAFE INT
+# ============================================================
+
+def safe_int(value, default=0):
+
+    try:
+
+        return int(value)
+
+    except (
+        TypeError,
+        ValueError
+    ):
+
+        return default
+
+
+# ============================================================
+# SAFE BOOL
+# ============================================================
+
+def safe_bool(value):
+
+    if isinstance(
+        value,
+        bool
+    ):
+
+        return value
+
+    if isinstance(
+        value,
+        str
+    ):
+
+        return value.lower() in [
+
+            "true",
+
+            "1",
+
+            "yes",
+
+            "detected"
+
+        ]
+
+    return bool(value)
+
+
+# ============================================================
+# NORMALIZE SCORE
+# ============================================================
+
+def normalize_score(
+    value,
+    maximum=1.0
 ):
 
-    # -----------------------------------------
-    # Convert paths
-    # -----------------------------------------
+    value = safe_float(
+        value
+    )
+
+    if maximum <= 0:
+
+        return 0.0
+
+    score = value / maximum
+
+    return max(
+        0.0,
+        min(
+            1.0,
+            score
+        )
+    )
+
+
+# ============================================================
+# ANALYZE IMAGE UNIFIED
+# ============================================================
+
+def analyze_image_unified(
+
+    image_path,
+
+    analysis_dir
+
+):
+
+    # ========================================================
+    # PATHS
+    # ========================================================
 
     image_path = Path(
         image_path
@@ -26,329 +158,1590 @@ def analyze_image_unified(
         analysis_dir
     )
 
-    # -----------------------------------------
-    # Validate image
-    # -----------------------------------------
+
+    # ========================================================
+    # VALIDATE IMAGE
+    # ========================================================
 
     if not image_path.exists():
 
         raise FileNotFoundError(
-            f"Image not found: {image_path}"
+
+            f"Image not found: "
+            f"{image_path}"
+
         )
 
-    # -----------------------------------------
-    # Create analysis directory
-    # -----------------------------------------
+
+    # ========================================================
+    # CREATE ANALYSIS DIRECTORY
+    # ========================================================
 
     analysis_dir.mkdir(
+
         parents=True,
+
         exist_ok=True
+
     )
 
-    # -----------------------------------------
-    # Run ELA / Edge / Wavelet
-    # -----------------------------------------
+
+    print()
+
+    print(
+        "=================================================="
+    )
+
+    print(
+        "        AI-FORGE UNIFIED IMAGE ANALYSIS"
+    )
+
+    print(
+        "=================================================="
+    )
+
+    print(
+        f"Evidence: {image_path.name}"
+    )
+
+    print(
+        f"Analysis Directory: {analysis_dir}"
+    )
+
+    print()
+
+
+    # ========================================================
+    # 1. IMAGE FORENSICS
+    # ========================================================
+
+    print(
+        "[1/7] Running ELA / Edge / Wavelet analysis..."
+    )
 
     forensic_result = analyze_image(
+
         str(image_path),
+
         str(analysis_dir)
+
     )
 
-    # -----------------------------------------
-    # Run Copy-Move
-    # -----------------------------------------
-
-    copy_move_result = detect_copy_move(
-        str(image_path),
-        output_dir=analysis_dir
-    )
-
-    # -----------------------------------------
-    # Safety checks
-    # -----------------------------------------
 
     if not isinstance(
+
         forensic_result,
+
         dict
+
     ):
+
         forensic_result = {}
 
-    if not isinstance(
-        copy_move_result,
-        dict
-    ):
-        copy_move_result = {}
-
-    # -----------------------------------------
-    # Get forensic signals
-    # -----------------------------------------
 
     forensic_signals = forensic_result.get(
+
         "signals",
+
         {}
+
     )
+
 
     if not isinstance(
+
         forensic_signals,
+
         dict
+
     ):
+
         forensic_signals = {}
 
-    # -----------------------------------------
-    # Extract signals
-    # -----------------------------------------
 
-    ela_score = float(
+    ela_score = safe_float(
+
         forensic_signals.get(
+
             "ela_score",
+
             0.0
+
         )
+
     )
 
-    edge_density = float(
+
+    edge_density = safe_float(
+
         forensic_signals.get(
+
             "edge_density",
+
             0.0
+
         )
+
     )
 
-    wavelet_score = float(
+
+    wavelet_score = safe_float(
+
         forensic_signals.get(
+
             "wavelet_score",
+
             0.0
+
         )
+
     )
 
-    copy_move_score = float(
-        copy_move_result.get(
-            "copy_move_score",
-            copy_move_result.get(
-                "score",
-                0.0
-            )
-        )
+
+    print(
+
+        "    ELA Score:",
+
+        ela_score
+
     )
 
-    copy_move_detected = bool(
+    print(
+
+        "    Edge Density:",
+
+        edge_density
+
+    )
+
+    print(
+
+        "    Wavelet Score:",
+
+        wavelet_score
+
+    )
+
+
+    # ========================================================
+    # 2. COPY-MOVE DETECTION
+    # ========================================================
+
+    print()
+
+    print(
+        "[2/7] Running copy-move detection..."
+    )
+
+
+    copy_move_result = detect_copy_move(
+
+        str(image_path),
+
+        analysis_dir
+
+    )
+
+
+    if not isinstance(
+
+        copy_move_result,
+
+        dict
+
+    ):
+
+        copy_move_result = {}
+
+
+    copy_move_detected = safe_bool(
+
         copy_move_result.get(
+
             "copy_move_detected",
+
             copy_move_result.get(
+
                 "detected",
+
                 False
+
             )
+
         )
+
     )
 
-    matched_points = int(
+
+    copy_move_score = safe_float(
+
         copy_move_result.get(
+
+            "copy_move_score",
+
+            copy_move_result.get(
+
+                "score",
+
+                0.0
+
+            )
+
+        )
+
+    )
+
+
+    matched_points = safe_int(
+
+        copy_move_result.get(
+
             "matched_points",
+
             copy_move_result.get(
+
                 "matches",
+
                 0
+
             )
+
         )
+
     )
 
-    ransac_inliers = int(
+
+    ransac_inliers = safe_int(
+
         copy_move_result.get(
+
             "ransac_inliers",
+
             copy_move_result.get(
+
                 "inliers",
+
                 0
+
             )
+
         )
-    )
-
-    # -----------------------------------------
-    # Combined Signals
-    # -----------------------------------------
-
-    signals = {
-
-        "ela_score":
-            round(
-                ela_score,
-                4
-            ),
-
-        "edge_density":
-            round(
-                edge_density,
-                4
-            ),
-
-        "wavelet_score":
-            round(
-                wavelet_score,
-                4
-            ),
-
-        "copy_move_score":
-            round(
-                copy_move_score,
-                4
-            ),
-
-        "copy_move_detected":
-            copy_move_detected,
-
-        "matched_points":
-            matched_points,
-
-        "ransac_inliers":
-            ransac_inliers
-
-    }
-
-    # -----------------------------------------
-    # Unified Forensic Score
-    # -----------------------------------------
-
-    forensic_score = (
-
-        0.30 * ela_score
-
-        +
-
-        0.20 * wavelet_score
-
-        +
-
-        0.20 * edge_density
-
-        +
-
-        0.30 * copy_move_score
 
     )
 
-    forensic_score = round(
-        float(
-            forensic_score
-        ),
-        4
+
+    print(
+
+        "    Copy-Move Detected:",
+
+        copy_move_detected
+
     )
 
-    # -----------------------------------------
-    # Determine Verdict
-    # -----------------------------------------
+    print(
 
-    if copy_move_detected:
+        "    Copy-Move Score:",
 
-        verdict = (
-            "Potential Forgery"
+        copy_move_score
+
+    )
+
+    print(
+
+        "    Matched Points:",
+
+        matched_points
+
+    )
+
+    print(
+
+        "    RANSAC Inliers:",
+
+        ransac_inliers
+
+    )
+
+
+    # ========================================================
+    # 3. METADATA ANALYSIS
+    # ========================================================
+
+    print()
+
+    print(
+        "[3/7] Running metadata analysis..."
+    )
+
+
+    metadata_result = analyze_metadata(
+
+        str(image_path)
+
+    )
+
+
+    if not isinstance(
+
+        metadata_result,
+
+        dict
+
+    ):
+
+        metadata_result = {}
+
+
+    metadata_suspicious = safe_bool(
+
+        metadata_result.get(
+
+            "suspicious",
+
+            False
+
         )
 
-    elif forensic_score >= 0.60:
+    )
 
-        verdict = (
-            "Likely Forged"
+
+    software_detected = safe_bool(
+
+        metadata_result.get(
+
+            "software_detected",
+
+            False
+
         )
 
-    elif forensic_score >= 0.30:
+    )
+
+
+    software = metadata_result.get(
+
+        "software",
+
+        None
+
+    )
+
+
+    print(
+
+        "    Metadata Suspicious:",
+
+        metadata_suspicious
+
+    )
+
+    print(
+
+        "    Software:",
+
+        software
+
+    )
+
+
+    # ========================================================
+    # 4. NOISE ANALYSIS
+    # ========================================================
+
+    print()
+
+    print(
+        "[4/7] Running noise consistency analysis..."
+    )
+
+
+    noise_result = analyze_noise(
+
+        str(image_path)
+
+    )
+
+
+    if not isinstance(
+
+        noise_result,
+
+        dict
+
+    ):
+
+        noise_result = {}
+
+
+    noise_score = safe_float(
+
+        noise_result.get(
+
+            "noise_score",
+
+            0.0
+
+        )
+
+    )
+
+
+    noise_inconsistency = safe_float(
+
+        noise_result.get(
+
+            "noise_inconsistency",
+
+            0.0
+
+        )
+
+    )
+
+
+    print(
+
+        "    Noise Score:",
+
+        noise_score
+
+    )
+
+    print(
+
+        "    Noise Inconsistency:",
+
+        noise_inconsistency
+
+    )
+
+
+    # ========================================================
+    # 5. FONT CONSISTENCY
+    # ========================================================
+
+    print()
+
+    print(
+        "[5/7] Running font consistency analysis..."
+    )
+
+
+    font_result = analyze_font_consistency(
+
+        str(image_path)
+
+    )
+
+
+    if not isinstance(
+
+        font_result,
+
+        dict
+
+    ):
+
+        font_result = {}
+
+
+    suspicious_words = font_result.get(
+
+        "suspicious_words",
+
+        []
+
+    )
+
+
+    if not isinstance(
+
+        suspicious_words,
+
+        list
+
+    ):
+
+        suspicious_words = []
+
+
+    font_anomaly_count = len(
+
+        suspicious_words
+
+    )
+
+
+    print(
+
+        "    Suspicious Font Regions:",
+
+        font_anomaly_count
+
+    )
+
+
+    # ========================================================
+    # 6. SPACING + REGION ANALYSIS
+    # ========================================================
+
+    print()
+
+    print(
+        "[6/7] Running layout and region analysis..."
+    )
+
+
+    spacing_result = analyze_spacing(
+
+        str(image_path)
+
+    )
+
+
+    if not isinstance(
+
+        spacing_result,
+
+        dict
+
+    ):
+
+        spacing_result = {}
+
+
+    spacing_risk = safe_float(
+
+        spacing_result.get(
+
+            "risk_score",
+
+            0.0
+
+        )
+
+    )
+
+
+    region_result = analyze_region_anomaly(
+
+        str(image_path)
+
+    )
+
+
+    if not isinstance(
+
+        region_result,
+
+        dict
+
+    ):
+
+        region_result = {}
+
+
+    high_risk_regions = region_result.get(
+
+        "high_risk_regions",
+
+        []
+
+    )
+
+
+    if not isinstance(
+
+        high_risk_regions,
+
+        list
+
+    ):
+
+        high_risk_regions = []
+
+
+    region_anomaly_count = len(
+
+        high_risk_regions
+
+    )
+
+
+    print(
+
+        "    Spacing Risk:",
+
+        spacing_risk
+
+    )
+
+    print(
+
+        "    High Risk Regions:",
+
+        region_anomaly_count
+
+    )
+
+
+    # ========================================================
+    # 7. EVIDENCE FUSION
+    # ========================================================
+
+    print()
+
+    print(
+        "[7/7] Fusing forensic evidence..."
+    )
+
+
+    evidence = []
+
+
+    # --------------------------------------------------------
+    # ELA
+    # --------------------------------------------------------
+
+    evidence.append(
+
+        Evidence(
+
+            module="ELA",
+
+            score=normalize_score(
+
+                ela_score
+
+            ),
+
+            confidence=0.75,
+
+            severity=(
+
+                "High"
+
+                if ela_score >= 0.60
+
+                else "Medium"
+
+                if ela_score >= 0.30
+
+                else "Low"
+
+            ),
+
+            reason=(
+
+                "Abnormal JPEG error-level "
+                "analysis pattern detected."
+
+                if ela_score >= 0.30
+
+                else
+
+                "ELA pattern appears relatively consistent."
+
+            )
+
+        )
+
+    )
+
+
+    # --------------------------------------------------------
+    # WAVELET
+    # --------------------------------------------------------
+
+    evidence.append(
+
+        Evidence(
+
+            module="Wavelet",
+
+            score=normalize_score(
+
+                wavelet_score
+
+            ),
+
+            confidence=0.75,
+
+            severity=(
+
+                "High"
+
+                if wavelet_score >= 0.60
+
+                else "Medium"
+
+                if wavelet_score >= 0.30
+
+                else "Low"
+
+            ),
+
+            reason=(
+
+                "Wavelet-based texture anomaly detected."
+
+                if wavelet_score >= 0.30
+
+                else
+
+                "Wavelet texture appears consistent."
+
+            )
+
+        )
+
+    )
+
+
+    # --------------------------------------------------------
+    # COPY MOVE
+    # --------------------------------------------------------
+
+    evidence.append(
+
+        Evidence(
+
+            module="CopyMove",
+
+            score=(
+
+                1.0
+
+                if copy_move_detected
+
+                else normalize_score(
+
+                    copy_move_score
+
+                )
+
+            ),
+
+            confidence=(
+
+                0.95
+
+                if copy_move_detected
+
+                else 0.70
+
+            ),
+
+            severity=(
+
+                "Critical"
+
+                if copy_move_detected
+
+                else "Low"
+
+            ),
+
+            reason=(
+
+                "Duplicated image content detected "
+                "using copy-move analysis."
+
+                if copy_move_detected
+
+                else
+
+                "No strong copy-move duplication detected."
+
+            )
+
+        )
+
+    )
+
+
+    # --------------------------------------------------------
+    # METADATA
+    # --------------------------------------------------------
+
+    evidence.append(
+
+        Evidence(
+
+            module="Metadata",
+
+            score=(
+
+                1.0
+
+                if metadata_suspicious
+
+                else 0.0
+
+            ),
+
+            confidence=0.80,
+
+            severity=(
+
+                "High"
+
+                if metadata_suspicious
+
+                else "Low"
+
+            ),
+
+            reason=(
+
+                f"Potential image editing software "
+                f"metadata detected: {software}."
+
+                if metadata_suspicious
+
+                else
+
+                "No suspicious editing software metadata detected."
+
+            )
+
+        )
+
+    )
+
+
+    # --------------------------------------------------------
+    # NOISE
+    # --------------------------------------------------------
+
+    evidence.append(
+
+        Evidence(
+
+            module="Noise",
+
+            score=normalize_score(
+
+                noise_inconsistency,
+
+                maximum=1.0
+
+            ),
+
+            confidence=0.65,
+
+            severity=(
+
+                "High"
+
+                if noise_inconsistency >= 0.60
+
+                else "Medium"
+
+                if noise_inconsistency >= 0.30
+
+                else "Low"
+
+            ),
+
+            reason=(
+
+                "Inconsistent noise distribution detected."
+
+                if noise_inconsistency >= 0.30
+
+                else
+
+                "Noise distribution appears relatively consistent."
+
+            )
+
+        )
+
+    )
+
+
+    # --------------------------------------------------------
+    # FONT
+    # --------------------------------------------------------
+
+    font_score = min(
+
+        1.0,
+
+        font_anomaly_count / 10
+
+    )
+
+
+    evidence.append(
+
+        Evidence(
+
+            module="Font",
+
+            score=font_score,
+
+            confidence=0.65,
+
+            severity=(
+
+                "High"
+
+                if font_anomaly_count >= 5
+
+                else "Medium"
+
+                if font_anomaly_count >= 2
+
+                else "Low"
+
+            ),
+
+            reason=(
+
+                f"{font_anomaly_count} suspicious "
+                f"font/text regions detected."
+
+                if font_anomaly_count > 0
+
+                else
+
+                "No significant font inconsistency detected."
+
+            )
+
+        )
+
+    )
+
+
+    # --------------------------------------------------------
+    # SPACING
+    # --------------------------------------------------------
+
+    spacing_score = min(
+
+        1.0,
+
+        spacing_risk / 100
+
+    )
+
+
+    evidence.append(
+
+        Evidence(
+
+            module="Spacing",
+
+            score=spacing_score,
+
+            confidence=0.70,
+
+            severity=(
+
+                "High"
+
+                if spacing_risk >= 70
+
+                else "Medium"
+
+                if spacing_risk >= 40
+
+                else "Low"
+
+            ),
+
+            reason=(
+
+                "Abnormal document text spacing or alignment detected."
+
+                if spacing_risk >= 40
+
+                else
+
+                "Text spacing and alignment appear consistent."
+
+            )
+
+        )
+
+    )
+
+
+    # --------------------------------------------------------
+    # REGION
+    # --------------------------------------------------------
+
+    region_score = min(
+
+        1.0,
+
+        region_anomaly_count / 10
+
+    )
+
+
+    evidence.append(
+
+        Evidence(
+
+            module="Region",
+
+            score=region_score,
+
+            confidence=0.70,
+
+            severity=(
+
+                "High"
+
+                if region_anomaly_count >= 5
+
+                else "Medium"
+
+                if region_anomaly_count >= 2
+
+                else "Low"
+
+            ),
+
+            reason=(
+
+                f"{region_anomaly_count} high-risk "
+                f"regions identified."
+
+                if region_anomaly_count > 0
+
+                else
+
+                "No significant high-risk regions identified."
+
+            )
+
+        )
+
+    )
+
+
+    # ========================================================
+    # FUSE EVIDENCE
+    # ========================================================
+
+    fusion_result = fuse_evidence(
+
+        evidence
+
+    )
+
+
+    risk_score = safe_float(
+
+        fusion_result.get(
+
+            "risk_score",
+
+            0.0
+
+        )
+
+    )
+
+
+    risk_score = max(
+
+        0.0,
+
+        min(
+
+            100.0,
+
+            risk_score
+
+        )
+
+    )
+
+
+    findings = fusion_result.get(
+
+        "findings",
+
+        []
+
+    )
+
+
+    if not isinstance(
+
+        findings,
+
+        list
+
+    ):
+
+        findings = []
+
+
+    # ========================================================
+    # FINAL VERDICT
+    # ========================================================
+
+    if risk_score >= 70:
 
         verdict = (
-            "Suspicious"
+
+            "HIGH RISK - LIKELY FORGED"
+
         )
+
+        recommendation = (
+
+            "Strong forensic indicators of image "
+            "manipulation detected. Manual forensic "
+            "verification is strongly recommended."
+
+        )
+
+
+    elif risk_score >= 45:
+
+        verdict = (
+
+            "MEDIUM RISK - SUSPICIOUS"
+
+        )
+
+        recommendation = (
+
+            "Multiple suspicious signals detected. "
+            "The evidence should be manually reviewed."
+
+        )
+
+
+    elif risk_score >= 20:
+
+        verdict = (
+
+            "LOW RISK - MINOR ANOMALIES"
+
+        )
+
+        recommendation = (
+
+            "Some weak forensic anomalies were detected, "
+            "but the available evidence is not sufficient "
+            "to confirm manipulation."
+
+        )
+
 
     else:
 
         verdict = (
-            "Authentic"
+
+            "NO SIGNIFICANT ANOMALY DETECTED"
+
         )
 
-    # -----------------------------------------
-    # Evidence ID
-    # -----------------------------------------
+        recommendation = (
 
-    evidence_id = (
-        image_path.stem
+            "No strong forensic evidence of manipulation "
+            "was detected by the available analysis modules."
+
+        )
+
+
+    # ========================================================
+    # CONFIDENCE
+    # ========================================================
+
+    active_modules = sum(
+
+        1
+
+        for ev in evidence
+
+        if ev.score > 0.20
+
     )
 
-    # -----------------------------------------
-    # Artifact API Paths
-    # -----------------------------------------
+
+    confidence = (
+
+        55
+
+        + min(
+
+            40,
+
+            active_modules * 5
+
+        )
+
+    )
+
+
+    if risk_score >= 70:
+
+        confidence += 3
+
+
+    confidence = min(
+
+        99.9,
+
+        round(
+
+            confidence,
+
+            2
+
+        )
+
+    )
+
+
+    # ========================================================
+    # SIGNALS
+    # ========================================================
+
+    signals = {
+
+        "ela_score":
+
+            round(
+
+                ela_score,
+
+                4
+
+            ),
+
+        "edge_density":
+
+            round(
+
+                edge_density,
+
+                4
+
+            ),
+
+        "wavelet_score":
+
+            round(
+
+                wavelet_score,
+
+                4
+
+            ),
+
+        "copy_move_score":
+
+            round(
+
+                copy_move_score,
+
+                4
+
+            ),
+
+        "copy_move_detected":
+
+            copy_move_detected,
+
+        "matched_points":
+
+            matched_points,
+
+        "ransac_inliers":
+
+            ransac_inliers,
+
+        "noise_score":
+
+            round(
+
+                noise_score,
+
+                4
+
+            ),
+
+        "noise_inconsistency":
+
+            round(
+
+                noise_inconsistency,
+
+                4
+
+            ),
+
+        "metadata_suspicious":
+
+            metadata_suspicious,
+
+        "software_detected":
+
+            software_detected,
+
+        "software":
+
+            software,
+
+        "font_anomaly_count":
+
+            font_anomaly_count,
+
+        "spacing_risk":
+
+            round(
+
+                spacing_risk,
+
+                2
+
+            ),
+
+        "region_anomaly_count":
+
+            region_anomaly_count
+
+    }
+
+
+    # ========================================================
+    # ARTIFACT PATHS
+    # ========================================================
+
+    evidence_id = image_path.stem
+
 
     artifacts = {
 
         "ela":
+
             f"/api/evidence/artifacts/"
+
             f"{evidence_id}/ela",
 
         "edges":
+
             f"/api/evidence/artifacts/"
+
             f"{evidence_id}/edges",
 
         "wavelet":
+
             f"/api/evidence/artifacts/"
+
             f"{evidence_id}/wavelet",
 
         "copy_move":
+
             f"/api/evidence/artifacts/"
+
             f"{evidence_id}/copy_move"
 
     }
 
-    # -----------------------------------------
-    # Final Result
-    # -----------------------------------------
+
+    # ========================================================
+    # FINAL RESULT
+    # ========================================================
 
     result = {
 
+        "evidence_id":
+
+            evidence_id,
+
         "verdict":
+
             verdict,
 
         "forensic_score":
-            forensic_score,
+
+            round(
+
+                risk_score / 100,
+
+                4
+
+            ),
+
+        "risk_score":
+
+            round(
+
+                risk_score,
+
+                2
+
+            ),
+
+        "confidence":
+
+            confidence,
+
+        "recommendation":
+
+            recommendation,
 
         "signals":
+
             signals,
 
+        "findings":
+
+            findings,
+
+        "evidence":
+
+            [
+
+                {
+
+                    "module":
+
+                        ev.module,
+
+                    "score":
+
+                        round(
+
+                            ev.score,
+
+                            4
+
+                        ),
+
+                    "confidence":
+
+                        round(
+
+                            ev.confidence,
+
+                            4
+
+                        ),
+
+                    "severity":
+
+                        ev.severity,
+
+                    "reason":
+
+                        ev.reason,
+
+                    "location":
+
+                        ev.location
+
+                }
+
+                for ev in evidence
+
+            ],
+
         "artifacts":
+
             artifacts
 
     }
 
-    # -----------------------------------------
-    # Debug
-    # -----------------------------------------
+
+    # ========================================================
+    # DEBUG OUTPUT
+    # ========================================================
+
+    print()
 
     print(
-        "\n========== IMAGE FORENSIC RESULT =========="
+        "=================================================="
     )
 
     print(
-        "Image:",
-        image_path
+        "          FINAL IMAGE FORENSIC RESULT"
     )
 
     print(
-        "Analysis Directory:",
-        analysis_dir
+        "=================================================="
     )
 
     print(
+
+        "Evidence ID:",
+
+        evidence_id
+
+    )
+
+    print(
+
+        "Risk Score:",
+
+        f"{risk_score}%"
+
+    )
+
+    print(
+
         "Verdict:",
+
         verdict
+
     )
 
     print(
-        "Forensic Score:",
-        forensic_score
+
+        "Confidence:",
+
+        f"{confidence}%"
+
     )
 
-    print(
-        "Signals:",
-        signals
-    )
+    print()
 
     print(
-        "Artifacts:",
-        artifacts
+
+        "Active Evidence Modules:",
+
+        active_modules
+
     )
 
+    print()
+
     print(
-        "============================================\n"
+
+        "Findings:"
+
     )
+
+
+    for finding in findings:
+
+        print(
+
+            " -",
+
+            finding
+
+        )
+
+
+    print()
+
+    print(
+
+        "=================================================="
+    )
+
 
     return result

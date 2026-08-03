@@ -1,53 +1,105 @@
 from pathlib import Path
 
+
 from backend.ingestion.pdf_processor import (
+
     pdf_to_images
+
 )
+
 
 from backend.agents.ocr_agent import (
+
     extract_text
+
 )
 
-from backend.analysis.image_forensics import (
-    analyze_image
+
+from backend.document_analysis.risk_engine import (
+
+    analyze_document_risk
+
+)
+
+
+from backend.document_analysis.heatmap_generator import (
+
+    generate_heatmap
+
+)
+
+
+from backend.document_analysis.report_generator import (
+
+    generate_report
+
 )
 
 
 def analyze_document(
+
     pdf_path: str
+
 ):
 
     pdf_path = Path(
+
         pdf_path
+
     )
 
-
-    # ==========================================
-    # VALIDATE PDF
-    # ==========================================
 
     if not pdf_path.exists():
 
         raise FileNotFoundError(
+
             f"PDF document not found: {pdf_path}"
+
         )
 
 
+    print()
+
     print(
-        f"\n[DOCUMENT] Starting analysis: "
-        f"{pdf_path.name}"
+
+        "=========================================="
+
+    )
+
+    print(
+
+        "AI-FORGE DOCUMENT FORENSIC ANALYSIS"
+
+    )
+
+    print(
+
+        "=========================================="
+
+    )
+
+    print(
+
+        "Document:",
+
+        pdf_path.name
+
     )
 
 
     # ==========================================
-    # DOCUMENT PAGE OUTPUT DIRECTORY
+    # OUTPUT DIRECTORY
     # ==========================================
 
     output_dir = (
 
-        pdf_path.parent /
+        pdf_path.parent
 
-        "document_pages" /
+        /
+
+        "document_pages"
+
+        /
 
         pdf_path.stem
 
@@ -55,17 +107,24 @@ def analyze_document(
 
 
     output_dir.mkdir(
+
         parents=True,
+
         exist_ok=True
+
     )
 
 
     # ==========================================
-    # CONVERT PDF TO IMAGES
+    # PDF TO IMAGES
     # ==========================================
 
+    print()
+
     print(
+
         "[DOCUMENT] Converting PDF to images..."
+
     )
 
 
@@ -79,13 +138,18 @@ def analyze_document(
 
 
     print(
-        "[DOCUMENT] PDF converted successfully."
+
+        "[DOCUMENT] Conversion completed."
+
     )
 
 
     print(
-        f"[DOCUMENT] Total pages: "
-        f"{len(page_images)}"
+
+        "[DOCUMENT] Pages:",
+
+        len(page_images)
+
     )
 
 
@@ -93,39 +157,58 @@ def analyze_document(
 
 
     # ==========================================
-    # PROCESS EACH PAGE
+    # PROCESS PAGES
     # ==========================================
 
     for index, image_path in enumerate(
+
         page_images
+
     ):
+
 
         page_number = index + 1
 
 
+        image_path = Path(
+
+            image_path
+
+        )
+
+
+        print()
+
         print(
 
-            f"\n[DOCUMENT] Processing page "
+            "=========================================="
 
-            f"{page_number}/"
+        )
+
+        print(
+
+            f"PROCESSING PAGE {page_number}/"
 
             f"{len(page_images)}"
 
         )
 
+        print(
 
-        image_path = Path(
-            image_path
+            "=========================================="
+
         )
 
 
         # ======================================
-        # PAGE FORENSIC OUTPUT DIRECTORY
+        # PAGE DIRECTORY
         # ======================================
 
         page_analysis_dir = (
 
-            output_dir /
+            output_dir
+
+            /
 
             f"page_{page_number}"
 
@@ -142,45 +225,12 @@ def analyze_document(
 
 
         # ======================================
-        # IMAGE FORENSICS
-        # ======================================
-
-        print(
-
-            f"[PAGE {page_number}] "
-
-            f"Running forensic analysis..."
-
-        )
-
-
-        forensic_result = analyze_image(
-
-            str(image_path),
-
-            str(page_analysis_dir)
-
-        )
-
-
-        print(
-
-            f"[PAGE {page_number}] "
-
-            f"Forensic analysis completed."
-
-        )
-
-
-        # ======================================
         # OCR
         # ======================================
 
         print(
 
-            f"[PAGE {page_number}] "
-
-            f"Running OCR..."
+            "[PAGE] Running OCR..."
 
         )
 
@@ -194,66 +244,394 @@ def analyze_document(
 
         print(
 
-            f"[PAGE {page_number}] "
-
-            f"OCR completed."
+            "[PAGE] OCR completed."
 
         )
 
 
         # ======================================
-        # STORE PAGE RESULT
+        # FORENSIC RISK ENGINE
         # ======================================
 
-        pages.append({
+        print(
+
+            "[PAGE] Running forensic risk engine..."
+
+        )
+
+
+        risk_result = analyze_document_risk(
+
+            str(image_path),
+
+            str(page_analysis_dir)
+
+        )
+
+
+        # ======================================
+        # HEATMAP
+        # ======================================
+
+        raw_analysis = risk_result.get(
+
+            "raw_analysis",
+
+            {}
+
+        )
+
+
+        region_analysis = raw_analysis.get(
+
+            "regions",
+
+            {}
+
+        )
+
+
+        regions = region_analysis.get(
+
+            "regions",
+
+            []
+
+        )
+
+
+        heatmap_result = generate_heatmap(
+
+            str(image_path),
+
+            regions,
+
+            str(page_analysis_dir)
+
+        )
+
+
+        # ======================================
+        # PAGE RESULT
+        # ======================================
+
+        page_result = {
 
             "page_number":
 
                 page_number,
 
-
             "image":
 
                 str(image_path),
-
 
             "ocr":
 
                 ocr_result,
 
+            "risk":
 
-            "forensics":
+                risk_result,
 
-                forensic_result
+            "heatmap":
 
-        })
+                heatmap_result
+
+        }
+
+
+        pages.append(
+
+            page_result
+
+        )
+
+
+        print()
+
+        print(
+
+            f"[PAGE {page_number}] "
+
+            "FINAL RESULT"
+
+        )
+
+        print(
+
+            "Risk Score:",
+
+            risk_result[
+
+                "risk_score"
+
+            ]
+
+        )
+
+        print(
+
+            "Confidence:",
+
+            risk_result[
+
+                "confidence"
+
+            ]
+
+        )
+
+        print(
+
+            "Verdict:",
+
+            risk_result[
+
+                "overall_verdict"
+
+            ]
+
+        )
 
 
     # ==========================================
-    # FINAL DOCUMENT RESULT
+    # DOCUMENT LEVEL RISK
     # ==========================================
 
-    print(
+    if pages:
 
-        "\n[DOCUMENT] Analysis completed successfully."
+        page_scores = [
+
+            p["risk"]["risk_score"]
+
+            for p in pages
+
+        ]
+
+
+        # The strongest suspicious page
+        # matters significantly.
+
+        max_score = max(
+
+            page_scores
+
+        )
+
+
+        average_score = sum(
+
+            page_scores
+
+        ) / len(
+
+            page_scores
+
+        )
+
+
+        # Weighted document score
+
+        document_risk = (
+
+            max_score * 0.70
+
+            +
+
+            average_score * 0.30
+
+        )
+
+
+    else:
+
+        document_risk = 0.0
+
+
+    document_risk = round(
+
+        min(
+
+            document_risk,
+
+            100
+
+        ),
+
+        2
 
     )
 
 
-    return {
+    # ==========================================
+    # DOCUMENT VERDICT
+    # ==========================================
+
+    if document_risk >= 80:
+
+        document_verdict = (
+
+            "CRITICAL RISK"
+
+        )
+
+
+    elif document_risk >= 60:
+
+        document_verdict = (
+
+            "HIGH RISK"
+
+        )
+
+
+    elif document_risk >= 35:
+
+        document_verdict = (
+
+            "MEDIUM RISK"
+
+        )
+
+
+    elif document_risk >= 15:
+
+        document_verdict = (
+
+            "LOW RISK"
+
+        )
+
+
+    else:
+
+        document_verdict = (
+
+            "NO SIGNIFICANT ANOMALY"
+
+        )
+
+
+    # ==========================================
+    # DOCUMENT FINDINGS
+    # ==========================================
+
+    document_findings = []
+
+
+    for page in pages:
+
+        for finding in page["risk"].get(
+
+            "findings",
+
+            []
+
+        ):
+
+            document_findings.append({
+
+                "page":
+
+                    page[
+
+                        "page_number"
+
+                    ],
+
+                **finding
+
+            })
+
+
+    # ==========================================
+    # FINAL RESULT
+    # ==========================================
+
+    final_result = {
 
         "document_type":
 
             "PDF",
 
+        "document_name":
+
+            pdf_path.name,
 
         "page_count":
 
             len(pages),
 
+        "risk_score":
+
+            document_risk,
+
+        "overall_verdict":
+
+            document_verdict,
 
         "pages":
 
-            pages
+            pages,
+
+        "findings":
+
+            document_findings
 
     }
+
+
+    print()
+
+    print(
+
+        "=========================================="
+
+    )
+
+    print(
+
+        "DOCUMENT FORENSIC ANALYSIS COMPLETE"
+
+    )
+
+    print(
+
+        "=========================================="
+
+    )
+
+    print(
+
+        "Document Risk:",
+
+        document_risk
+
+    )
+
+    print(
+
+        "Verdict:",
+
+        document_verdict
+
+    )
+
+    print(
+
+        "Suspicious Findings:",
+
+        len(document_findings)
+
+    )
+
+    print(
+
+        "=========================================="
+
+    )
+
+    print()
+
+
+    return final_result
