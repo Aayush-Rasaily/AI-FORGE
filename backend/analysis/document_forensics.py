@@ -35,6 +35,24 @@ from backend.document_analysis.report_generator import (
 
 )
 
+import numpy as np
+
+def find_numpy(obj, path="root"):
+
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            find_numpy(v, f"{path}.{k}")
+
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            find_numpy(item, f"{path}[{i}]")
+
+    elif isinstance(obj, tuple):
+        for i, item in enumerate(obj):
+            find_numpy(item, f"{path}[{i}]")
+
+    elif isinstance(obj, np.generic):
+        print(path, type(obj), obj)
 
 def analyze_document(
 
@@ -267,6 +285,10 @@ def analyze_document(
             str(page_analysis_dir)
 
         )
+        print("\n========== NUMPY CHECK ==========")
+        find_numpy(risk_result)
+        print("=================================\n")
+        
 
 
         # ======================================
@@ -317,34 +339,19 @@ def analyze_document(
 
         page_result = {
 
-            "page_number":
+            "page_number": page_number,
 
-                page_number,
+            "image": str(image_path),
 
-            "image":
+            "ocr": ocr_result,
 
-                str(image_path),
+            "risk": risk_result,
 
-            "ocr":
-
-                ocr_result,
-
-            "risk":
-
-                risk_result,
-
-            "heatmap":
-
-                heatmap_result
+            "heatmap": heatmap_result
 
         }
 
-
-        pages.append(
-
-            page_result
-
-        )
+        pages.append(page_result)
 
 
         print()
@@ -398,54 +405,50 @@ def analyze_document(
     # DOCUMENT LEVEL RISK
     # ==========================================
 
-    if pages:
+        page_result = {
 
-        page_scores = [
+        "page_number": page_number,
 
-            p["risk"]["risk_score"]
+        "image": str(image_path),
 
-            for p in pages
+        "ocr": ocr_result,
 
-        ]
+        "risk": risk_result,
 
+        "heatmap": heatmap_result
 
-        # The strongest suspicious page
-        # matters significantly.
-
-        max_score = max(
-
-            page_scores
-
-        )
+        }
 
 
-        average_score = sum(
+        # ==========================================
+        # DOCUMENT LEVEL RISK
+        # ==========================================
 
-            page_scores
+        if pages:
 
-        ) / len(
+            page_scores = [
 
-            page_scores
+                p["risk"]["risk_score"]
 
-        )
+                for p in pages
 
+            ]
 
-        # Weighted document score
+            max_score = max(page_scores)
 
-        document_risk = (
+            average_score = sum(page_scores) / len(page_scores)
 
-            max_score * 0.70
+            document_risk = (
 
-            +
+                max_score * 0.70 +
 
-            average_score * 0.30
+                average_score * 0.30
 
-        )
+            )
 
+        else:
 
-    else:
-
-        document_risk = 0.0
+            document_risk = 0.0
 
 
     document_risk = round(

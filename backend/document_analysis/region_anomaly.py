@@ -242,6 +242,10 @@ def analyze_region_anomaly(image_path):
             else:
 
                 verdict = "Normal"
+            bbox = [
+                [int(x), int(y)]
+                for x, y in word["bbox"]
+            ]
 
             regions.append({
 
@@ -255,7 +259,7 @@ def analyze_region_anomaly(image_path):
 
                 "bbox":
 
-                    word["bbox"],
+                    bbox,
 
                 "risk_score":
 
@@ -285,17 +289,14 @@ def analyze_region_anomaly(image_path):
 
     ]
 
-    overall = np.mean(
-
-        [
-
-            r["risk_score"]
-
-            for r in regions
-
-        ]
-
+    if regions:
+        overall = float(
+        np.mean(
+            [r["risk_score"] for r in regions]
+        )
     )
+    else:
+        overall = 0.0
 
     if overall >= 60:
 
@@ -348,6 +349,26 @@ def analyze_region_anomaly(image_path):
     print("=====================================")
 
     print()
+    def check_numpy(obj, path="root"):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                check_numpy(v, f"{path}.{k}")
+        elif isinstance(obj, list):
+            for i, item in enumerate(obj):
+                    check_numpy(item, f"{path}[{i}]")
+        elif isinstance(obj, np.generic):
+            print(f"NUMPY FOUND -> {path}: {type(obj)} = {obj}")
+
+        result = {
+            "overall_score": round(float(overall), 2),
+            "overall_verdict": verdict,
+            "regions": regions,
+            "high_risk_regions": high_risk
+        }
+
+        check_numpy(result)
+
+        return result
 
     return {
 

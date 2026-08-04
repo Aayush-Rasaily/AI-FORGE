@@ -4,71 +4,96 @@ from typing import Optional
 
 @dataclass
 class Evidence:
+    """
+    Represents one forensic finding produced by an analysis module.
 
-    # Name of the forensic module
+    score:
+        Suspicion score between 0.0 and 1.0
+
+    confidence:
+        Confidence in the finding between 0.0 and 1.0
+
+    severity:
+        LOW / MEDIUM / HIGH / CRITICAL
+
+    reason:
+        Human-readable explanation
+
+    location:
+        Optional location of suspicious evidence
+    """
+
     module: str
-
-    # Suspicion score
-    # 0.0 = no suspicious evidence
-    # 1.0 = very strong suspicious evidence
     score: float
-
-    # Reliability of this module's result
-    # 0.0 = unreliable
-    # 1.0 = highly reliable
     confidence: float
-
-    # LOW / MEDIUM / HIGH / CRITICAL
     severity: str
-
-    # Human-readable explanation
     reason: str
-
-    # Optional location
     location: Optional[str] = None
 
     def __post_init__(self):
 
-        # Keep values within valid range
+        # ---------------------------------------------------------
+        # Normalize score
+        # ---------------------------------------------------------
+
+        try:
+            self.score = float(self.score)
+        except Exception:
+            self.score = 0.0
+
         self.score = max(
             0.0,
             min(
                 1.0,
-                float(self.score)
+                self.score
             )
         )
+
+        # ---------------------------------------------------------
+        # Normalize confidence
+        # ---------------------------------------------------------
+
+        try:
+            self.confidence = float(self.confidence)
+        except Exception:
+            self.confidence = 0.0
 
         self.confidence = max(
             0.0,
             min(
                 1.0,
-                float(self.confidence)
+                self.confidence
             )
+        )
+
+        # ---------------------------------------------------------
+        # Normalize strings
+        # ---------------------------------------------------------
+
+        self.module = str(
+            self.module
         )
 
         self.severity = str(
             self.severity
         ).upper()
 
-        self.module = str(
-            self.module
-        )
-
         self.reason = str(
             self.reason
         )
 
-    def weighted_score(self):
+        # ---------------------------------------------------------
+        # Normalize location
+        # ---------------------------------------------------------
 
-        return (
+        if self.location is not None:
+            self.location = str(
+                self.location
+            )
 
-            self.score
-
-            *
-
-            self.confidence
-
-        )
+    # =============================================================
+    # Convert to dictionary
+    # =============================================================
 
     def to_dict(self):
 
@@ -79,13 +104,13 @@ class Evidence:
 
             "score":
                 round(
-                    self.score,
+                    float(self.score),
                     4
                 ),
 
             "confidence":
                 round(
-                    self.confidence,
+                    float(self.confidence),
                     4
                 ),
 
@@ -96,12 +121,11 @@ class Evidence:
                 self.reason,
 
             "location":
-                self.location,
-
-            "weighted_score":
-                round(
-                    self.weighted_score(),
-                    4
-                )
+                self.location
 
         }
+
+
+__all__ = [
+    "Evidence"
+]

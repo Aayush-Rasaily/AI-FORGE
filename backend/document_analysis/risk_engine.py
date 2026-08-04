@@ -1056,6 +1056,9 @@ def analyze_document_risk(
 
     print()
 
+    from backend.document_analysis.evidence_fusion import make_json_serializable
+
+    result = make_json_serializable(result)
 
     return result
 

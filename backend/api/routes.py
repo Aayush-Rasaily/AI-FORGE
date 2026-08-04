@@ -6,70 +6,68 @@ from fastapi import (
     APIRouter,
     UploadFile,
     File,
-    HTTPException
+    HTTPException,
 )
 
 from fastapi.responses import FileResponse
+from fastapi.encoders import jsonable_encoder
 
 from backend.core.evidence_manager import (
-    generate_evidence_id
+    generate_evidence_id,
 )
 
 from backend.ingestion.file_router import (
-    identify_file_type
+    identify_file_type,
 )
 
 from backend.analysis.unified_image_analysis import (
-    analyze_image_unified
+    analyze_image_unified,
 )
 
 from backend.analysis.document_forensics import (
-    analyze_document
+    analyze_document,
 )
 
 from backend.models.signature.inference import (
-    verify_signature
+    verify_signature,
 )
 
 from backend.analysis.copy_move import (
-    detect_copy_move
+    detect_copy_move,
 )
 
-from backend.analysis.metadata_analysis import (
-    analyze_metadata
+from backend.document_analysis.evidence_fusion import (
+    make_json_serializable,
 )
 
-from backend.analysis.noise_analysis import (
-    analyze_noise
-)
 
-from backend.document_analysis.text_layout_analysis import (
-    analyze_text_layout
-)
+# ============================================================
+# SAFE JSON RESPONSE
+# ============================================================
 
-from backend.document_analysis.font_consistency import (
-    analyze_font_consistency
-)
+def safe_json_response(data):
+    """
+    Convert the complete response recursively into
+    JSON-safe native Python objects.
 
-from backend.document_analysis.spacing_analysis import (
-    analyze_spacing
-)
+    This prevents errors such as:
 
-from backend.document_analysis.region_anomaly import (
-    analyze_region_anomaly
-)
+        TypeError: 'numpy.int32' object is not iterable
 
-from backend.document_analysis.heatmap_generator import (
-    generate_heatmap
-)
+    and:
 
-from backend.document_analysis.risk_engine import (
-    analyze_document_risk
-)
+        ValueError: [TypeError(...), TypeError(...)]
+    """
 
-from backend.document_analysis.report_generator import (
-    generate_report
-)
+    # First pass:
+    # Convert NumPy, Torch, dataclasses, tuples, etc.
+    cleaned = make_json_serializable(data)
+
+    # Second pass:
+    # Let FastAPI's encoder handle any remaining
+    # supported special objects.
+    return jsonable_encoder(cleaned)
+
 
 # ============================================================
 # ROUTER
@@ -77,7 +75,7 @@ from backend.document_analysis.report_generator import (
 
 router = APIRouter(
     prefix="/api",
-    tags=["Evidence"]
+    tags=["Evidence"],
 )
 
 
@@ -91,16 +89,18 @@ UPLOAD_DIR = Path(
 
 UPLOAD_DIR.mkdir(
     parents=True,
-    exist_ok=True
+    exist_ok=True,
 )
 
 
-# Maximum upload size: 100 MB
+# ============================================================
+# MAXIMUM UPLOAD SIZE
+# ============================================================
 
 MAX_FILE_SIZE = (
-    100 *
-    1024 *
-    1024
+    100
+    * 1024
+    * 1024
 )
 
 
@@ -109,7 +109,7 @@ MAX_FILE_SIZE = (
 # ============================================================
 
 def find_evidence_file(
-    evidence_id: str
+    evidence_id: str,
 ):
     """
     Find the uploaded evidence file
@@ -122,18 +122,25 @@ def find_evidence_file(
         )
     )
 
+    # Ignore files inside analysis directory
+    files = [
+        file
+        for file in files
+        if file.is_file()
+    ]
+
     if not files:
 
         raise HTTPException(
             status_code=404,
-            detail="Evidence not found"
+            detail="Evidence not found",
         )
 
     return files[0]
 
 
 def get_analysis_dir(
-    evidence_id: str
+    evidence_id: str,
 ):
     """
     Return the dedicated analysis directory
@@ -141,18 +148,14 @@ def get_analysis_dir(
     """
 
     analysis_dir = (
-
-        UPLOAD_DIR /
-
-        "analysis" /
-
-        evidence_id
-
+        UPLOAD_DIR
+        / "analysis"
+        / evidence_id
     )
 
     analysis_dir.mkdir(
         parents=True,
-        exist_ok=True
+        exist_ok=True,
     )
 
     return analysis_dir
@@ -166,7 +169,7 @@ def get_analysis_dir(
     "/evidence/upload"
 )
 async def upload_evidence(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
 ):
 
     # -----------------------------------------
@@ -177,9 +180,8 @@ async def upload_evidence(
 
         raise HTTPException(
             status_code=400,
-            detail="No filename provided"
+            detail="No filename provided",
         )
-
 
     # -----------------------------------------
     # Identify file type
@@ -189,7 +191,6 @@ async def upload_evidence(
         file.filename
     )
 
-
     # -----------------------------------------
     # Reject unsupported files
     # -----------------------------------------
@@ -198,9 +199,8 @@ async def upload_evidence(
 
         raise HTTPException(
             status_code=400,
-            detail="Unsupported file type"
+            detail="Unsupported file type",
         )
-
 
     # -----------------------------------------
     # Generate evidence ID
@@ -210,7 +210,6 @@ async def upload_evidence(
         generate_evidence_id()
     )
 
-
     # -----------------------------------------
     # Preserve original extension
     # -----------------------------------------
@@ -219,28 +218,19 @@ async def upload_evidence(
         file.filename
     ).suffix.lower()
 
-
     # -----------------------------------------
     # Create unique filename
     # -----------------------------------------
 
     saved_filename = (
-
         f"{evidence_id}"
-
         f"{extension}"
-
     )
-
 
     file_path = (
-
-        UPLOAD_DIR /
-
-        saved_filename
-
+        UPLOAD_DIR
+        / saved_filename
     )
-
 
     # -----------------------------------------
     # Save uploaded file
@@ -252,7 +242,7 @@ async def upload_evidence(
 
         with open(
             file_path,
-            "wb"
+            "wb",
         ) as buffer:
 
             while True:
@@ -265,22 +255,17 @@ async def upload_evidence(
 
                     break
 
-
                 total_size += len(
                     chunk
                 )
-
 
                 # -----------------------------------------
                 # Check maximum file size
                 # -----------------------------------------
 
                 if (
-
-                    total_size >
-
-                    MAX_FILE_SIZE
-
+                    total_size
+                    > MAX_FILE_SIZE
                 ):
 
                     file_path.unlink(
@@ -288,26 +273,20 @@ async def upload_evidence(
                     )
 
                     raise HTTPException(
-
                         status_code=413,
-
                         detail=(
                             "File exceeds "
                             "100 MB limit"
-                        )
-
+                        ),
                     )
-
 
                 buffer.write(
                     chunk
                 )
 
-
     except HTTPException:
 
         raise
-
 
     except Exception as e:
 
@@ -316,48 +295,30 @@ async def upload_evidence(
         )
 
         raise HTTPException(
-
             status_code=500,
-
             detail=(
-
                 "Failed to save file: "
-
                 f"{str(e)}"
-
-            )
-
+            ),
         )
-
 
     # -----------------------------------------
     # Return upload result
     # -----------------------------------------
 
-    return {
-
-        "success":
-            True,
-
-        "evidence_id":
-            evidence_id,
-
-        "original_filename":
-            file.filename,
-
-        "file_type":
-            file_type,
-
-        "file_size":
-            total_size,
-
-        "stored_filename":
-            saved_filename,
-
-        "message":
-            "Evidence uploaded successfully"
-
-    }
+    return safe_json_response(
+        {
+            "success": True,
+            "evidence_id": evidence_id,
+            "original_filename": file.filename,
+            "file_type": file_type,
+            "file_size": total_size,
+            "stored_filename": saved_filename,
+            "message": (
+                "Evidence uploaded successfully"
+            ),
+        }
+    )
 
 
 # ============================================================
@@ -368,7 +329,7 @@ async def upload_evidence(
     "/evidence/analyze-image/{evidence_id}"
 )
 async def analyze_uploaded_image(
-    evidence_id: str
+    evidence_id: str,
 ):
 
     # -----------------------------------------
@@ -379,7 +340,6 @@ async def analyze_uploaded_image(
         evidence_id
     )
 
-
     # -----------------------------------------
     # Get dedicated analysis directory
     # -----------------------------------------
@@ -388,7 +348,6 @@ async def analyze_uploaded_image(
         evidence_id
     )
 
-
     # -----------------------------------------
     # Run unified analysis
     # -----------------------------------------
@@ -396,27 +355,23 @@ async def analyze_uploaded_image(
     try:
 
         result = analyze_image_unified(
-
             image_path,
-
-            analysis_dir
-
+            analysis_dir,
         )
 
+        # IMPORTANT:
+        # Sanitize result before returning
+        return safe_json_response(
+            {
+                "success": True,
+                "evidence_id": evidence_id,
+                "analysis": result,
+            }
+        )
 
-        return {
+    except HTTPException:
 
-            "success":
-                True,
-
-            "evidence_id":
-                evidence_id,
-
-            "analysis":
-                result
-
-        }
-
+        raise
 
     except Exception as e:
 
@@ -426,84 +381,54 @@ async def analyze_uploaded_image(
 
         print(
             "Evidence ID:",
-            evidence_id
+            evidence_id,
         )
 
         print(
             "Image:",
-            image_path
+            image_path,
         )
 
         print(
             "Error:",
-            repr(e)
+            repr(e),
         )
 
         print(
             "===========================================\n"
         )
 
-
         raise HTTPException(
-
             status_code=500,
-
-            detail=str(e)
-
+            detail=str(e),
         )
 
 
 # ============================================================
 # 3. UNIFIED ANALYSIS ALIAS
 # ============================================================
-#
-# This keeps your existing frontend/API calls working:
-#
-# POST /api/evidence/analyze/{evidence_id}
-#
-# Both endpoints now run the SAME unified pipeline.
-#
-# ============================================================
 
 @router.post(
     "/evidence/analyze/{evidence_id}"
 )
 async def analyze_evidence(
-    evidence_id: str
+    evidence_id: str,
 ):
 
     # -----------------------------------------
     # Find uploaded evidence
     # -----------------------------------------
 
-    image_files = list(
-        UPLOAD_DIR.glob(
-            f"{evidence_id}.*"
-        )
+    image_path = find_evidence_file(
+        evidence_id
     )
-
-    if not image_files:
-
-        raise HTTPException(
-            status_code=404,
-            detail="Evidence not found"
-        )
-
-    image_path = image_files[0]
 
     # -----------------------------------------
     # Analysis directory
     # -----------------------------------------
 
-    analysis_dir = (
-        UPLOAD_DIR /
-        "analysis" /
+    analysis_dir = get_analysis_dir(
         evidence_id
-    )
-
-    analysis_dir.mkdir(
-        parents=True,
-        exist_ok=True
     )
 
     # -----------------------------------------
@@ -514,31 +439,33 @@ async def analyze_evidence(
 
         result = analyze_image_unified(
             image_path,
-            analysis_dir
+            analysis_dir,
         )
 
-        return {
+        # IMPORTANT:
+        # Sanitize before returning
+        return safe_json_response(
+            {
+                "success": True,
+                "evidence_id": evidence_id,
+                "analysis": result,
+            }
+        )
 
-            "success": True,
+    except HTTPException:
 
-            "evidence_id":
-                evidence_id,
-
-            "analysis":
-                result
-
-        }
+        raise
 
     except Exception as e:
 
         print(
             "Unified image analysis failed:",
-            repr(e)
+            repr(e),
         )
 
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=str(e),
         )
 
 
@@ -547,39 +474,28 @@ async def analyze_evidence(
 # ============================================================
 
 @router.get(
-    "/evidence/artifacts/{evidence_id}/{artifact_type}"
+    "/evidence/artifacts/"
+    "{evidence_id}/"
+    "{artifact_type}"
 )
 async def get_evidence_artifact(
     evidence_id: str,
-    artifact_type: str
+    artifact_type: str,
 ):
 
     # -----------------------------------------
     # Find uploaded evidence
     # -----------------------------------------
 
-    image_files = list(
-        UPLOAD_DIR.glob(
-            f"{evidence_id}.*"
-        )
+    image_path = find_evidence_file(
+        evidence_id
     )
-
-    if not image_files:
-
-        raise HTTPException(
-            status_code=404,
-            detail="Evidence not found"
-        )
-
-    image_path = image_files[0]
 
     # -----------------------------------------
     # Analysis directory
     # -----------------------------------------
 
-    analysis_dir = (
-        UPLOAD_DIR /
-        "analysis" /
+    analysis_dir = get_analysis_dir(
         evidence_id
     )
 
@@ -590,21 +506,20 @@ async def get_evidence_artifact(
     artifact_map = {
 
         "ela":
-            analysis_dir /
-            f"{image_path.stem}_ela.jpg",
+            analysis_dir
+            / f"{image_path.stem}_ela.jpg",
 
         "edges":
-            analysis_dir /
-            f"{image_path.stem}_edges.jpg",
+            analysis_dir
+            / f"{image_path.stem}_edges.jpg",
 
         "wavelet":
-            analysis_dir /
-            f"{image_path.stem}_wavelet.jpg",
+            analysis_dir
+            / f"{image_path.stem}_wavelet.jpg",
 
         "copy_move":
-            analysis_dir /
-            f"{image_path.stem}_copy_move.jpg"
-
+            analysis_dir
+            / f"{image_path.stem}_copy_move.jpg",
     }
 
     # -----------------------------------------
@@ -617,8 +532,9 @@ async def get_evidence_artifact(
             status_code=400,
             detail=(
                 "Invalid artifact type. "
-                "Use ela, edges, wavelet, or copy_move."
-            )
+                "Use ela, edges, wavelet, "
+                "or copy_move."
+            ),
         )
 
     artifact_path = artifact_map[
@@ -631,15 +547,14 @@ async def get_evidence_artifact(
 
     if (
         artifact_type == "copy_move"
-        and
-        not artifact_path.exists()
+        and not artifact_path.exists()
     ):
 
         try:
 
             detect_copy_move(
                 str(image_path),
-                output_dir=analysis_dir
+                output_dir=analysis_dir,
             )
 
         except Exception as e:
@@ -647,9 +562,10 @@ async def get_evidence_artifact(
             raise HTTPException(
                 status_code=500,
                 detail=(
-                    "Copy-move artifact generation failed: "
+                    "Copy-move artifact "
+                    "generation failed: "
                     f"{str(e)}"
-                )
+                ),
             )
 
     # -----------------------------------------
@@ -661,8 +577,9 @@ async def get_evidence_artifact(
         raise HTTPException(
             status_code=404,
             detail=(
-                f"Artifact not found: {artifact_path}"
-            )
+                f"Artifact not found: "
+                f"{artifact_path}"
+            ),
         )
 
     # -----------------------------------------
@@ -671,68 +588,149 @@ async def get_evidence_artifact(
 
     return FileResponse(
         path=str(artifact_path),
-        media_type="image/jpeg"
+        media_type="image/jpeg",
     )
+
 
 # ============================================================
 # 5. DOCUMENT ANALYSIS
 # ============================================================
 
 @router.post(
-    "/evidence/analyze-document/{evidence_id}"
+    "/evidence/analyze-document/"
+    "{evidence_id}"
 )
 async def analyze_uploaded_document(
-    evidence_id: str
+    evidence_id: str,
 ):
 
-    document_files = list(
+    # -----------------------------------------
+    # Find PDF
+    # -----------------------------------------
 
+    document_files = list(
         UPLOAD_DIR.glob(
             f"{evidence_id}.pdf"
         )
-
     )
 
     if not document_files:
 
         raise HTTPException(
-
             status_code=404,
-
-            detail="PDF document not found"
-
+            detail="PDF document not found",
         )
 
-    document_path = document_files[0]
+    document_path = (
+        document_files[0]
+    )
+
+    print(
+        "\n=========================================="
+    )
+
+    print(
+        "DOCUMENT ANALYSIS"
+    )
+
+    print(
+        "Evidence ID:",
+        evidence_id,
+    )
+
+    print(
+        "Document:",
+        document_path,
+    )
+
+    print(
+        "==========================================\n"
+    )
 
     try:
 
+        # -----------------------------------------
+        # Run document forensic analysis
+        # -----------------------------------------
+
         result = analyze_document(
-
             str(document_path)
-
         )
 
-        return {
+        print(
+            "Document analysis completed."
+        )
 
+        # -----------------------------------------
+        # CRITICAL FIX
+        #
+        # Convert EVERYTHING recursively before
+        # returning to FastAPI.
+        #
+        # This handles:
+        #
+        # numpy.int32
+        # numpy.int64
+        # numpy.float32
+        # numpy.ndarray
+        # torch.Tensor
+        # dataclasses
+        # nested dictionaries
+        # nested lists
+        # -----------------------------------------
+
+        response_data = {
             "success": True,
-
-            "evidence_id":
-                evidence_id,
-
-            "analysis":
-                result
-
+            "evidence_id": evidence_id,
+            "analysis": result,
         }
+
+        cleaned_response = (
+            make_json_serializable(
+                response_data
+            )
+        )
+
+        # -----------------------------------------
+        # Final FastAPI JSON encoding
+        # -----------------------------------------
+
+        return jsonable_encoder(
+            cleaned_response
+        )
+
+    except HTTPException:
+
+        raise
 
     except Exception as e:
 
+        print(
+            "\n========== DOCUMENT ANALYSIS ERROR =========="
+        )
+
+        print(
+            "Evidence ID:",
+            evidence_id,
+        )
+
+        print(
+            "Document:",
+            document_path,
+        )
+
+        print(
+            "Error:",
+            repr(e),
+        )
+
+        print(
+            "=============================================\n"
+        )
+
         raise HTTPException(
-
             status_code=500,
-
-            detail=str(e)
-
+            detail=str(e),
         )
 
 
@@ -747,7 +745,7 @@ async def verify_signature_endpoint(
 
     reference: UploadFile = File(...),
 
-    query: UploadFile = File(...)
+    query: UploadFile = File(...),
 
 ):
 
@@ -760,30 +758,22 @@ async def verify_signature_endpoint(
         if not reference.filename:
 
             raise HTTPException(
-
                 status_code=400,
-
                 detail=(
                     "Reference signature "
                     "is required"
-                )
-
+                ),
             )
-
 
         if not query.filename:
 
             raise HTTPException(
-
                 status_code=400,
-
                 detail=(
                     "Query signature "
                     "is required"
-                )
-
+                ),
             )
-
 
         # -----------------------------------------
         # Temporary directory
@@ -795,128 +785,88 @@ async def verify_signature_endpoint(
                 temp_dir
             )
 
-
             reference_ext = Path(
                 reference.filename
             ).suffix.lower()
-
 
             query_ext = Path(
                 query.filename
             ).suffix.lower()
 
-
             reference_path = (
-
-                temp_path /
-
-                f"reference{reference_ext}"
-
+                temp_path
+                / f"reference{reference_ext}"
             )
-
 
             query_path = (
-
-                temp_path /
-
-                f"query{query_ext}"
-
+                temp_path
+                / f"query{query_ext}"
             )
-
 
             # -----------------------------------------
             # Save reference signature
             # -----------------------------------------
 
             with open(
-
                 reference_path,
-
-                "wb"
-
+                "wb",
             ) as buffer:
 
                 buffer.write(
-
                     await reference.read()
-
                 )
-
 
             # -----------------------------------------
             # Save query signature
             # -----------------------------------------
 
             with open(
-
                 query_path,
-
-                "wb"
-
+                "wb",
             ) as buffer:
 
                 buffer.write(
-
                     await query.read()
-
                 )
-
 
             # -----------------------------------------
             # Run signature verification
             # -----------------------------------------
 
             result = verify_signature(
-
                 str(reference_path),
-
-                str(query_path)
-
+                str(query_path),
             )
 
+            # -----------------------------------------
+            # Return sanitized result
+            # -----------------------------------------
 
-            return {
-
-                "success":
-                    True,
-
-                "analysis":
-                    result
-
-            }
-
+            return safe_json_response(
+                {
+                    "success": True,
+                    "analysis": result,
+                }
+            )
 
     except HTTPException:
 
         raise
 
-
     except Exception as e:
 
         raise HTTPException(
-
             status_code=500,
-
             detail=(
-
                 "Signature verification "
                 "failed: "
-
                 f"{str(e)}"
-
-            )
-
+            ),
         )
 
 
 # ============================================================
 # 7. SIGNATURE VERIFICATION ALIAS
-# ============================================================
-#
-# Keeps your existing frontend call:
-#
-# POST /api/signature/verify
-#
 # ============================================================
 
 @router.post(
@@ -926,20 +876,15 @@ async def verify_signature_api(
 
     reference: UploadFile = File(...),
 
-    query: UploadFile = File(...)
+    query: UploadFile = File(...),
 
 ):
 
     allowed_extensions = {
-
         ".png",
-
         ".jpg",
-
-        ".jpeg"
-
+        ".jpeg",
     }
-
 
     # -----------------------------------------
     # Validate filenames
@@ -948,126 +893,93 @@ async def verify_signature_api(
     if not reference.filename:
 
         raise HTTPException(
-
             status_code=400,
-
             detail=(
                 "Reference signature "
                 "is required"
-            )
-
+            ),
         )
-
 
     if not query.filename:
 
         raise HTTPException(
-
             status_code=400,
-
             detail=(
                 "Query signature "
                 "is required"
-            )
-
+            ),
         )
-
 
     # -----------------------------------------
     # Validate extensions
     # -----------------------------------------
 
     reference_ext = Path(
-
         reference.filename
-
     ).suffix.lower()
-
 
     query_ext = Path(
-
         query.filename
-
     ).suffix.lower()
 
-
-    if reference_ext not in allowed_extensions:
+    if (
+        reference_ext
+        not in allowed_extensions
+    ):
 
         raise HTTPException(
-
             status_code=400,
-
             detail=(
                 "Reference signature must be "
                 "PNG, JPG, or JPEG"
-            )
-
+            ),
         )
 
-
-    if query_ext not in allowed_extensions:
+    if (
+        query_ext
+        not in allowed_extensions
+    ):
 
         raise HTTPException(
-
             status_code=400,
-
             detail=(
                 "Query signature must be "
                 "PNG, JPG, or JPEG"
-            )
-
+            ),
         )
 
-
     # -----------------------------------------
-    # Temporary directory
+    # Temporary signature directory
     # -----------------------------------------
 
     signature_dir = Path(
-
         "data/temp/signatures"
-
     )
-
 
     signature_dir.mkdir(
-
         parents=True,
-
-        exist_ok=True
-
+        exist_ok=True,
     )
-
 
     reference_id = str(
         uuid.uuid4()
     )
 
-
     query_id = str(
         uuid.uuid4()
     )
 
-
     reference_path = (
-
-        signature_dir /
-
-        f"{reference_id}"
+        signature_dir
+        / f"{reference_id}"
         f"{reference_ext}"
-
     )
-
 
     query_path = (
-
-        signature_dir /
-
-        f"{query_id}"
+        signature_dir
+        / f"{query_id}"
         f"{query_ext}"
-
     )
-
 
     try:
 
@@ -1076,118 +988,96 @@ async def verify_signature_api(
         # -----------------------------------------
 
         with open(
-
             reference_path,
-
-            "wb"
-
+            "wb",
         ) as buffer:
 
             while True:
 
                 chunk = await reference.read(
-
                     1024 * 1024
-
                 )
-
 
                 if not chunk:
 
                     break
 
-
                 buffer.write(
                     chunk
                 )
-
 
         # -----------------------------------------
         # Save query
         # -----------------------------------------
 
         with open(
-
             query_path,
-
-            "wb"
-
+            "wb",
         ) as buffer:
 
             while True:
 
                 chunk = await query.read(
-
                     1024 * 1024
-
                 )
-
 
                 if not chunk:
 
                     break
 
-
                 buffer.write(
                     chunk
                 )
-
 
         # -----------------------------------------
         # Run model
         # -----------------------------------------
 
         result = verify_signature(
-
             str(reference_path),
-
-            str(query_path)
-
+            str(query_path),
         )
 
-
         # -----------------------------------------
-        # Return result
+        # Return sanitized result
         # -----------------------------------------
 
-        return {
+        return safe_json_response(
+            {
+                "success": True,
+                "analysis": {
+                    "verdict":
+                        result.get(
+                            "verdict"
+                        ),
 
-            "success":
-                True,
+                    "similarity":
+                        result.get(
+                            "similarity"
+                        ),
 
-            "analysis": {
-
-                "verdict":
-                    result["verdict"],
-
-                "similarity":
-                    result["similarity"],
-
-                "confidence":
-                    result["confidence"]
-
+                    "confidence":
+                        result.get(
+                            "confidence"
+                        ),
+                },
             }
+        )
 
-        }
+    except HTTPException:
 
+        raise
 
     except Exception as e:
 
         raise HTTPException(
-
             status_code=500,
-
             detail=(
-
                 "Signature verification "
                 "failed: "
-
                 f"{str(e)}"
-
-            )
-
+            ),
         )
-
 
     finally:
 
@@ -1213,9 +1103,7 @@ async def verify_signature_api(
     "{evidence_id}"
 )
 async def analyze_copy_move_endpoint(
-
-    evidence_id: str
-
+    evidence_id: str,
 ):
 
     # -----------------------------------------
@@ -1223,22 +1111,16 @@ async def analyze_copy_move_endpoint(
     # -----------------------------------------
 
     image_path = find_evidence_file(
-
         evidence_id
-
     )
-
 
     # -----------------------------------------
     # Get dedicated analysis directory
     # -----------------------------------------
 
     analysis_dir = get_analysis_dir(
-
         evidence_id
-
     )
-
 
     # -----------------------------------------
     # Run Copy-Move Detection
@@ -1247,34 +1129,47 @@ async def analyze_copy_move_endpoint(
     try:
 
         result = detect_copy_move(
-
             str(image_path),
-
-            output_dir=analysis_dir
-
+            output_dir=analysis_dir,
         )
 
+        # -----------------------------------------
+        # Sanitize result
+        # -----------------------------------------
 
-        return {
+        return safe_json_response(
+            {
+                "success": True,
+                "evidence_id": evidence_id,
+                "analysis": result,
+            }
+        )
 
-            "success":
-                True,
+    except HTTPException:
 
-            "evidence_id":
-                evidence_id,
-
-            "analysis":
-                result
-
-        }
-
+        raise
 
     except Exception as e:
 
+        print(
+            "\n========== COPY-MOVE ANALYSIS ERROR =========="
+        )
+
+        print(
+            "Evidence ID:",
+            evidence_id,
+        )
+
+        print(
+            "Error:",
+            repr(e),
+        )
+
+        print(
+            "===============================================\n"
+        )
+
         raise HTTPException(
-
             status_code=500,
-
-            detail=str(e)
-
+            detail=str(e),
         )

@@ -1,1071 +1,855 @@
-from typing import List, Dict, Any
+"""
+AI-FORGE Risk Intelligence
+==========================
 
-from backend.document_analysis.evidence import Evidence
+This module converts forensic evidence into a final risk assessment.
 
+IMPORTANT ARCHITECTURE RULE
+---------------------------
 
-# ============================================================
-# RISK INTELLIGENCE ENGINE
-# ============================================================
-#
-# Purpose:
-# Convert multiple forensic signals into a single
-# explainable risk assessment.
-#
-# This layer does NOT replace forensic detectors.
-# It combines their outputs.
-#
-# ============================================================
+This file MUST NOT import:
 
+    evidence_fusion.py
 
-# ============================================================
-# SIGNAL GROUPS
-# ============================================================
+That would create:
 
-DOCUMENT_SIGNALS = {
-    "Font",
-    "Spacing",
-    "Region",
-    "OCR"
-}
+    evidence_fusion
+        -> risk_intelligence
+            -> evidence_fusion
 
-IMAGE_SIGNALS = {
-    "ELA",
-    "Wavelet",
-    "CopyMove",
-    "Noise",
-    "Metadata"
-}
+which causes a circular import.
+
+Instead:
+
+    evidence_fusion
+        -> risk_intelligence
+
+This module is completely independent.
+"""
+
+from typing import Any
 
 
-# ============================================================
-# SEVERITY WEIGHTS
-# ============================================================
+# ================================================================
+# JSON SERIALIZATION
+# ================================================================
 
-SEVERITY_WEIGHT = {
+def make_json_serializable(value: Any) -> Any:
+    """
+    Recursively converts NumPy, Torch and other values
+    into standard Python JSON-compatible values.
+    """
 
-    "LOW": 1.0,
+    if value is None:
+        return None
 
-    "MEDIUM": 1.15,
+    # ------------------------------------------------------------
+    # Native Python values
+    # ------------------------------------------------------------
 
-    "HIGH": 1.35,
-
-    "CRITICAL": 1.60
-
-}
-
-
-# ============================================================
-# CLAMP
-# ============================================================
-
-def clamp(
-    value,
-    minimum=0.0,
-    maximum=100.0
-):
-
-    return max(
-
-        minimum,
-
-        min(
-
-            maximum,
-
-            value
-
+    if isinstance(
+        value,
+        (
+            str,
+            int,
+            float,
+            bool
         )
+    ):
+        return value
 
+    # ------------------------------------------------------------
+    # NumPy
+    # ------------------------------------------------------------
+
+    try:
+
+        import numpy as np
+
+        if isinstance(
+            value,
+            np.integer
+        ):
+            return int(
+                value
+            )
+
+        if isinstance(
+            value,
+            np.floating
+        ):
+            return float(
+                value
+            )
+
+        if isinstance(
+            value,
+            np.bool_
+        ):
+            return bool(
+                value
+            )
+
+        if isinstance(
+            value,
+            np.ndarray
+        ):
+            return [
+                make_json_serializable(
+                    item
+                )
+                for item in value.tolist()
+            ]
+
+    except ImportError:
+        pass
+
+    # ------------------------------------------------------------
+    # PyTorch
+    # ------------------------------------------------------------
+
+    try:
+
+        import torch
+
+        if isinstance(
+            value,
+            torch.Tensor
+        ):
+
+            if value.numel() == 1:
+
+                return make_json_serializable(
+                    value.detach()
+                    .cpu()
+                    .item()
+                )
+
+            return make_json_serializable(
+                value.detach()
+                .cpu()
+                .tolist()
+            )
+
+    except ImportError:
+        pass
+
+    # ------------------------------------------------------------
+    # Dictionary
+    # ------------------------------------------------------------
+
+    if isinstance(
+        value,
+        dict
+    ):
+
+        return {
+
+            str(key):
+                make_json_serializable(
+                    val
+                )
+
+            for key, val
+            in value.items()
+
+        }
+
+    # ------------------------------------------------------------
+    # List
+    # ------------------------------------------------------------
+
+    if isinstance(
+        value,
+        list
+    ):
+
+        return [
+
+            make_json_serializable(
+                item
+            )
+
+            for item
+            in value
+
+        ]
+
+    # ------------------------------------------------------------
+    # Tuple
+    # ------------------------------------------------------------
+
+    if isinstance(
+        value,
+        tuple
+    ):
+
+        return [
+
+            make_json_serializable(
+                item
+            )
+
+            for item
+            in value
+
+        ]
+
+    # ------------------------------------------------------------
+    # Set
+    # ------------------------------------------------------------
+
+    if isinstance(
+        value,
+        set
+    ):
+
+        return [
+
+            make_json_serializable(
+                item
+            )
+
+            for item
+            in value
+
+        ]
+
+    # ------------------------------------------------------------
+    # Objects with item()
+    # ------------------------------------------------------------
+
+    if hasattr(
+        value,
+        "item"
+    ):
+
+        try:
+
+            return make_json_serializable(
+                value.item()
+            )
+
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------
+    # Objects with tolist()
+    # ------------------------------------------------------------
+
+    if hasattr(
+        value,
+        "tolist"
+    ):
+
+        try:
+
+            return make_json_serializable(
+                value.tolist()
+            )
+
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------
+    # Fallback
+    # ------------------------------------------------------------
+
+    return str(
+        value
     )
 
 
-# ============================================================
+# ================================================================
+# SAFE FLOAT
+# ================================================================
+
+def safe_float(
+    value,
+    default=0.0
+):
+
+    try:
+
+        result = float(
+            value
+        )
+
+        if result != result:
+            return default
+
+        return result
+
+    except Exception:
+
+        return default
+
+
+# ================================================================
 # NORMALIZE EVIDENCE
-# ============================================================
+# ================================================================
 
 def normalize_evidence(
-    evidence_list: List[Evidence]
+    evidence_list
 ):
 
     normalized = []
 
+    if evidence_list is None:
+
+        return normalized
+
     for evidence in evidence_list:
 
-        score = float(
+        # --------------------------------------------------------
+        # Evidence object with to_dict()
+        # --------------------------------------------------------
 
-            evidence.score
+        if hasattr(
+            evidence,
+            "to_dict"
+        ):
 
+            try:
+
+                evidence = evidence.to_dict()
+
+            except Exception:
+
+                continue
+
+        # --------------------------------------------------------
+        # Ignore invalid values
+        # --------------------------------------------------------
+
+        if not isinstance(
+            evidence,
+            dict
+        ):
+
+            continue
+
+        # --------------------------------------------------------
+        # Extract values
+        # --------------------------------------------------------
+
+        module = str(
+            evidence.get(
+                "module",
+                "Unknown"
+            )
         )
 
-        confidence = float(
-
-            evidence.confidence
-
+        score = safe_float(
+            evidence.get(
+                "score",
+                0.0
+            )
         )
 
-        severity = (
+        confidence = safe_float(
+            evidence.get(
+                "confidence",
+                0.0
+            )
+        )
 
-            evidence.severity
-
-            or
-
-            "LOW"
-
+        severity = str(
+            evidence.get(
+                "severity",
+                "LOW"
+            )
         ).upper()
 
-        severity_factor = (
-
-            SEVERITY_WEIGHT.get(
-
-                severity,
-
-                1.0
-
+        reason = str(
+            evidence.get(
+                "reason",
+                ""
             )
-
         )
 
-        # ----------------------------------------------------
-        # Base contribution
-        # ----------------------------------------------------
-
-        contribution = (
-
-            score
-
-            *
-
-            confidence
-
-            *
-
-            severity_factor
-
+        location = evidence.get(
+            "location"
         )
 
-        normalized.append({
+        # --------------------------------------------------------
+        # Clamp values
+        # --------------------------------------------------------
 
-            "module":
+        score = max(
+            0.0,
+            min(
+                1.0,
+                score
+            )
+        )
 
-                evidence.module,
+        confidence = max(
+            0.0,
+            min(
+                1.0,
+                confidence
+            )
+        )
 
-            "score":
+        # --------------------------------------------------------
+        # Append normalized evidence
+        # --------------------------------------------------------
 
-                score,
+        normalized.append(
 
-            "confidence":
+            {
 
-                confidence,
+                "module":
+                    module,
 
-            "severity":
+                "score":
+                    score,
 
-                severity,
+                "confidence":
+                    confidence,
 
-            "reason":
+                "severity":
+                    severity,
 
-                evidence.reason,
+                "reason":
+                    reason,
 
-            "location":
+                "location":
+                    location
 
-                evidence.location,
+            }
 
-            "contribution":
-
-                contribution
-
-        })
+        )
 
     return normalized
 
 
-# ============================================================
-# CALCULATE BASE RISK
-# ============================================================
+# ================================================================
+# MAIN RISK INTELLIGENCE FUNCTION
+# ================================================================
 
-def calculate_base_risk(
-    evidence
+def analyze_risk_intelligence(
+    evidence_list
 ):
+    """
+    Analyze a collection of forensic evidence findings.
+
+    This function ALWAYS returns a dictionary containing:
+
+        verdict
+        forensic_score
+        risk_score
+        confidence
+        evidence_coverage
+        findings
+        evidence
+
+    This guarantees that the frontend receives the
+    expected fields.
+    """
+
+    # ------------------------------------------------------------
+    # Normalize input
+    # ------------------------------------------------------------
+
+    evidence = normalize_evidence(
+        evidence_list
+    )
+
+    # ------------------------------------------------------------
+    # Empty evidence
+    # ------------------------------------------------------------
 
     if not evidence:
 
-        return 0.0
+        return {
 
-    total_weight = 0.0
+            "verdict":
+                "INSUFFICIENT EVIDENCE",
 
-    weighted_score = 0.0
+            "forensic_score":
+                0.0,
 
-    # Equal base contribution for each
-    # available evidence source.
+            "risk_score":
+                0.0,
+
+            "confidence":
+                0,
+
+            "evidence_coverage":
+                0.0,
+
+            "recommendation":
+                "Insufficient forensic evidence is available for a reliable risk assessment.",
+
+            "findings":
+                [],
+
+            "evidence":
+                []
+
+        }
+
+    # ------------------------------------------------------------
+    # Calculate weighted score
     #
-    # This avoids over-relying on a single
-    # detector.
+    # score × confidence
+    # ------------------------------------------------------------
 
-    for ev in evidence:
+    weighted_scores = []
 
-        weight = 1.0
+    confidence_values = []
 
-        weighted_score += (
+    for item in evidence:
 
-            ev["score"]
+        score = item[
+            "score"
+        ]
 
+        confidence = item[
+            "confidence"
+        ]
+
+        weighted_score = (
+
+            score
             *
-
-            ev["confidence"]
-
-            *
-
-            ev["severity_factor"]
-
-            if "severity_factor" in ev
-
-            else
-
-            ev["contribution"]
+            confidence
 
         )
 
-        total_weight += weight
+        weighted_scores.append(
+            weighted_score
+        )
 
-    if total_weight == 0:
+        confidence_values.append(
+            confidence
+        )
 
-        return 0.0
+    # ------------------------------------------------------------
+    # Final forensic score
+    # ------------------------------------------------------------
 
-    # Normalize approximately to 0-100
+    if weighted_scores:
 
-    average = (
+        total_weight = sum(
+            confidence_values
+        )
 
-        weighted_score
+        if total_weight > 0:
 
+            forensic_score = (
+
+                sum(
+                    weighted_scores
+                )
+
+                /
+
+                total_weight
+
+            )
+
+        else:
+
+            forensic_score = 0.0
+
+    else:
+
+        forensic_score = 0.0
+
+    forensic_score = max(
+        0.0,
+        min(
+            1.0,
+            forensic_score
+        )
+    )
+
+    # ------------------------------------------------------------
+    # Risk score 0-100
+    # ------------------------------------------------------------
+
+    risk_score = (
+
+        forensic_score
+        *
+        100.0
+
+    )
+
+    # ------------------------------------------------------------
+    # Overall confidence
+    # ------------------------------------------------------------
+
+    if confidence_values:
+
+        average_confidence = (
+
+            sum(
+                confidence_values
+            )
+
+            /
+
+            len(
+                confidence_values
+            )
+
+        )
+
+    else:
+
+        average_confidence = 0.0
+
+    confidence = round(
+
+        average_confidence
+        *
+        100
+
+    )
+
+    # ------------------------------------------------------------
+    # Evidence coverage
+    #
+    # Measures how many evidence modules contributed.
+    #
+    # We use unique module names.
+    # ------------------------------------------------------------
+
+    modules = set(
+
+        item[
+            "module"
+        ]
+
+        for item
+        in evidence
+
+    )
+
+    evidence_coverage = min(
+
+        1.0,
+
+        len(
+            modules
+        )
         /
-
-        total_weight
-
-    )
-
-    return clamp(
-
-        average * 100
+        8.0
 
     )
 
-
-# ============================================================
-# STRONG SIGNAL ANALYSIS
-# ============================================================
-
-def analyze_strong_signals(
-    evidence
-):
-
-    strong_signals = []
-
-    for ev in evidence:
-
-        effective_score = (
-
-            ev["score"]
-
-            *
-
-            ev["confidence"]
-
-        )
-
-        if effective_score >= 0.60:
-
-            strong_signals.append(
-
-                ev
-
-            )
-
-    return strong_signals
-
-
-# ============================================================
-# SIGNAL DIVERSITY
-# ============================================================
-
-def calculate_signal_diversity(
-    evidence
-):
-
-    active_modules = [
-
-        ev["module"]
-
-        for ev in evidence
-
-        if (
-
-            ev["score"]
-
-            *
-
-            ev["confidence"]
-
-        ) >= 0.40
-
-    ]
-
-    unique_modules = set(
-
-        active_modules
-
-    )
-
-    return len(
-
-        unique_modules
-
-    )
-
-
-# ============================================================
-# DOCUMENT CORRELATION
-# ============================================================
-
-def calculate_document_correlation(
-    evidence
-):
-
-    document_hits = 0
-
-    for ev in evidence:
-
-        if ev["module"] in DOCUMENT_SIGNALS:
-
-            effective_score = (
-
-                ev["score"]
-
-                *
-
-                ev["confidence"]
-
-            )
-
-            if effective_score >= 0.40:
-
-                document_hits += 1
-
-    # Multiple document-level anomalies
-    # reinforce each other.
-
-    if document_hits >= 3:
-
-        return 20.0
-
-    if document_hits == 2:
-
-        return 12.0
-
-    if document_hits == 1:
-
-        return 4.0
-
-    return 0.0
-
-
-# ============================================================
-# IMAGE CORRELATION
-# ============================================================
-
-def calculate_image_correlation(
-    evidence
-):
-
-    image_hits = 0
-
-    for ev in evidence:
-
-        if ev["module"] in IMAGE_SIGNALS:
-
-            effective_score = (
-
-                ev["score"]
-
-                *
-
-                ev["confidence"]
-
-            )
-
-            if effective_score >= 0.40:
-
-                image_hits += 1
-
-    if image_hits >= 3:
-
-        return 15.0
-
-    if image_hits == 2:
-
-        return 8.0
-
-    if image_hits == 1:
-
-        return 3.0
-
-    return 0.0
-
-
-# ============================================================
-# STRONG SIGNAL BOOST
-# ============================================================
-
-def calculate_strong_signal_boost(
-    strong_signals
-):
-
-    if not strong_signals:
-
-        return 0.0
-
-    count = len(
-
-        strong_signals
-
-    )
-
-    if count >= 4:
-
-        return 20.0
-
-    if count == 3:
-
-        return 15.0
-
-    if count == 2:
-
-        return 10.0
-
-    if count == 1:
-
-        return 5.0
-
-    return 0.0
-
-
-# ============================================================
-# FINDINGS
-# ============================================================
-
-def build_findings(
-    evidence
-):
-
-    findings = []
-
-    for ev in evidence:
-
-        effective_score = (
-
-            ev["score"]
-
-            *
-
-            ev["confidence"]
-
-        )
-
-        if effective_score >= 0.70:
-
-            findings.append({
-
-                "module":
-
-                    ev["module"],
-
-                "severity":
-
-                    "HIGH",
-
-                "reason":
-
-                    ev["reason"],
-
-                "score":
-
-                    round(
-
-                        ev["score"],
-
-                        4
-
-                    ),
-
-                "confidence":
-
-                    round(
-
-                        ev["confidence"],
-
-                        4
-
-                    ),
-
-                "location":
-
-                    ev["location"]
-
-            })
-
-        elif effective_score >= 0.40:
-
-            findings.append({
-
-                "module":
-
-                    ev["module"],
-
-                "severity":
-
-                    "MEDIUM",
-
-                "reason":
-
-                    ev["reason"],
-
-                "score":
-
-                    round(
-
-                        ev["score"],
-
-                        4
-
-                    ),
-
-                "confidence":
-
-                    round(
-
-                        ev["confidence"],
-
-                        4
-
-                    ),
-
-                "location":
-
-                    ev["location"]
-
-            })
-
-    return findings
-
-
-# ============================================================
-# FINAL VERDICT
-# ============================================================
-
-def determine_verdict(
-    risk_score
-):
+    # ------------------------------------------------------------
+    # Determine verdict
+    # ------------------------------------------------------------
 
     if risk_score >= 80:
 
-        return (
+        verdict = (
+            "HIGH RISK - STRONG FORENSIC ANOMALIES"
+        )
 
-            "HIGH RISK - STRONG EVIDENCE"
+        recommendation = (
+
+            "Multiple strong forensic indicators "
+            "suggest potential manipulation. "
+            "Manual forensic review is strongly recommended."
 
         )
 
     elif risk_score >= 60:
 
-        return (
+        verdict = (
+            "SUSPICIOUS"
+        )
 
-            "MEDIUM-HIGH RISK - MULTIPLE ANOMALIES"
+        recommendation = (
+
+            "Several forensic anomalies were detected. "
+            "Additional evidence and manual review are recommended."
 
         )
 
-    elif risk_score >= 40:
+    elif risk_score >= 35:
 
-        return (
-
-            "MEDIUM RISK - MANUAL VERIFICATION"
-
+        verdict = (
+            "MEDIUM RISK - POSSIBLE ANOMALIES"
         )
 
-    elif risk_score >= 20:
+        recommendation = (
 
-        return (
-
-            "LOW RISK - MINOR ANOMALIES"
-
-        )
-
-    return (
-
-        "AUTHENTIC - NO SIGNIFICANT ANOMALY"
-
-    )
-
-
-# ============================================================
-# RECOMMENDATION
-# ============================================================
-
-def generate_recommendation(
-    risk_score,
-    strong_signal_count,
-    diversity
-):
-
-    if risk_score >= 80:
-
-        return (
-
-            "Multiple independent forensic signals indicate "
-
-            "a high probability of manipulation. Evidence "
-
-            "should be escalated for detailed forensic review."
-
-        )
-
-    if risk_score >= 60:
-
-        return (
-
-            "Several independent anomalies were detected. "
-
-            "Manual verification and additional evidence "
-
-            "should be requested before accepting the document."
-
-        )
-
-    if risk_score >= 40:
-
-        return (
-
-            "Moderate forensic anomalies were detected. "
-
-            "The evidence should undergo manual verification."
-
-        )
-
-    if risk_score >= 20:
-
-        return (
-
-            "Some weak forensic anomalies were detected, "
-
-            "but the available evidence is not sufficient "
-
+            "Some forensic anomalies were detected. "
+            "The available evidence is not sufficient "
             "to confirm manipulation."
 
         )
 
-    return (
+    elif risk_score >= 15:
 
-        "No significant forensic anomaly was detected. "
+        verdict = (
+            "LOW RISK - MINOR ANOMALIES"
+        )
 
-        "The evidence appears consistent with an authentic "
+        recommendation = (
 
-        "document, although automated analysis cannot "
-
-        "guarantee authenticity."
-
-    )
-
-
-# ============================================================
-# CONFIDENCE
-# ============================================================
-
-def calculate_confidence(
-    evidence,
-    diversity
-):
-
-    if not evidence:
-
-        return 50.0
-
-    confidence_values = [
-
-        ev["confidence"]
-
-        for ev in evidence
-
-    ]
-
-    average_confidence = (
-
-        sum(confidence_values)
-
-        /
-
-        len(confidence_values)
-
-    )
-
-    # Evidence diversity improves confidence.
-
-    diversity_bonus = min(
-
-        diversity * 3,
-
-        15
-
-    )
-
-    confidence = (
-
-        average_confidence * 70
-
-        +
-
-        diversity_bonus
-
-        +
-
-        15
-
-    )
-
-    return round(
-
-        clamp(
-
-            confidence,
-
-            50,
-
-            99.9
-
-        ),
-
-        2
-
-    )
-
-
-# ============================================================
-# MAIN RISK INTELLIGENCE FUNCTION
-# ============================================================
-
-def analyze_risk_intelligence(
-    evidence_list: List[Evidence]
-) -> Dict[str, Any]:
-
-    print()
-
-    print(
-
-        "========== RISK INTELLIGENCE =========="
-
-    )
-
-    print(
-
-        "Evidence sources:",
-
-        len(evidence_list)
-
-    )
-
-    # --------------------------------------------------------
-    # Normalize
-    # --------------------------------------------------------
-
-    evidence = normalize_evidence(
-
-        evidence_list
-
-    )
-
-    # --------------------------------------------------------
-    # Base risk
-    # --------------------------------------------------------
-
-    base_risk = calculate_base_risk(
-
-        evidence
-
-    )
-
-    # --------------------------------------------------------
-    # Strong signals
-    # --------------------------------------------------------
-
-    strong_signals = analyze_strong_signals(
-
-        evidence
-
-    )
-
-    strong_boost = calculate_strong_signal_boost(
-
-        strong_signals
-
-    )
-
-    # --------------------------------------------------------
-    # Signal diversity
-    # --------------------------------------------------------
-
-    diversity = calculate_signal_diversity(
-
-        evidence
-
-    )
-
-    # --------------------------------------------------------
-    # Correlation
-    # --------------------------------------------------------
-
-    document_boost = (
-
-        calculate_document_correlation(
-
-            evidence
+            "Some weak forensic anomalies were detected, "
+            "but the available evidence is not sufficient "
+            "to confirm manipulation."
 
         )
 
-    )
+    else:
 
-    image_boost = (
+        verdict = (
+            "LOW RISK - NO SIGNIFICANT ANOMALIES"
+        )
 
-        calculate_image_correlation(
+        recommendation = (
 
-            evidence
+            "No significant forensic manipulation indicators "
+            "were detected in the available evidence."
 
         )
 
-    )
+    # ============================================================
+    # BUILD FINDINGS
+    # ============================================================
 
-    # --------------------------------------------------------
-    # Final risk
-    # --------------------------------------------------------
+    findings = []
 
-    final_score = (
+    for item in evidence:
 
-        base_risk
+        severity = item[
+            "severity"
+        ]
 
-        +
+        score = item[
+            "score"
+        ]
 
-        strong_boost
+        # --------------------------------------------------------
+        # Only include meaningful findings
+        # --------------------------------------------------------
 
-        +
+        if (
 
-        document_boost
+            severity in [
+                "MEDIUM",
+                "HIGH",
+                "CRITICAL"
+            ]
 
-        +
+            or
 
-        image_boost
+            score >= 0.5
 
-    )
+        ):
 
-    final_score = round(
+            findings.append(
 
-        clamp(
+                {
 
-            final_score
+                    "module":
+                        item[
+                            "module"
+                        ],
 
-        ),
+                    "severity":
+                        severity,
 
-        2
+                    "reason":
+                        item[
+                            "reason"
+                        ],
 
-    )
+                    "score":
+                        round(
+                            score,
+                            4
+                        ),
 
-    # --------------------------------------------------------
-    # Verdict
-    # --------------------------------------------------------
+                    "confidence":
+                        round(
+                            item[
+                                "confidence"
+                            ],
+                            4
+                        ),
 
-    verdict = determine_verdict(
+                    "location":
+                        item[
+                            "location"
+                        ]
 
-        final_score
+                }
 
-    )
+            )
 
-    # --------------------------------------------------------
-    # Confidence
-    # --------------------------------------------------------
+    # ============================================================
+    # FINAL RESULT
+    # ============================================================
 
-    confidence = calculate_confidence(
+    result = {
 
-        evidence,
-
-        diversity
-
-    )
-
-    # --------------------------------------------------------
-    # Findings
-    # --------------------------------------------------------
-
-    findings = build_findings(
-
-        evidence
-
-    )
-
-    # --------------------------------------------------------
-    # Recommendation
-    # --------------------------------------------------------
-
-    recommendation = (
-
-        generate_recommendation(
-
-            final_score,
-
-            len(strong_signals),
-
-            diversity
-
-        )
-
-    )
-
-    print(
-
-        "Base Risk:",
-
-        round(base_risk, 2)
-
-    )
-
-    print(
-
-        "Strong Signal Boost:",
-
-        strong_boost
-
-    )
-
-    print(
-
-        "Document Correlation:",
-
-        document_boost
-
-    )
-
-    print(
-
-        "Image Correlation:",
-
-        image_boost
-
-    )
-
-    print(
-
-        "Signal Diversity:",
-
-        diversity
-
-    )
-
-    print(
-
-        "Final Risk:",
-
-        final_score
-
-    )
-
-    print(
-
-        "Verdict:",
-
-        verdict
-
-    )
-
-    print(
-
-        "Confidence:",
-
-        confidence
-
-    )
-
-    print(
-
-        "========================================"
-
-    )
-
-    print()
-
-    return {
-
-        "risk_score":
-
-            final_score,
+        "verdict":
+            verdict,
 
         "forensic_score":
-
             round(
-
-                final_score / 100,
-
+                forensic_score,
                 4
+            ),
 
+        "risk_score":
+            round(
+                risk_score,
+                2
             ),
 
         "confidence":
+            int(
+                confidence
+            ),
 
-            confidence,
-
-        "overall_verdict":
-
-            verdict,
+        "evidence_coverage":
+            round(
+                evidence_coverage,
+                4
+            ),
 
         "recommendation":
-
             recommendation,
 
         "findings":
-
             findings,
 
-        "risk_breakdown": {
-
-            "base_risk":
-
-                round(
-
-                    base_risk,
-
-                    2
-
-                ),
-
-            "strong_signal_boost":
-
-                strong_boost,
-
-            "document_correlation_boost":
-
-                document_boost,
-
-            "image_correlation_boost":
-
-                image_boost,
-
-            "signal_diversity":
-
-                diversity,
-
-            "strong_signal_count":
-
-                len(
-
-                    strong_signals
-
-                )
-
-        },
-
         "evidence":
-
             evidence
 
     }
+
+    # ------------------------------------------------------------
+    # Final serialization safety
+    # ------------------------------------------------------------
+
+    return make_json_serializable(
+        result
+    )
+
+
+# ================================================================
+# EXPORTS
+# ================================================================
+
+__all__ = [
+
+    "analyze_risk_intelligence",
+
+    "make_json_serializable",
+
+    "normalize_evidence"
+
+]

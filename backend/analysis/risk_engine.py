@@ -1,365 +1,547 @@
-from pathlib import Path
-
-from backend.analysis.image_forensics import analyze_image
-from backend.analysis.copy_move import detect_copy_move
-from backend.analysis.metadata_analysis import analyze_metadata
-from backend.analysis.noise_analysis import analyze_noise
-
-from backend.document_analysis.font_consistency import (
-    analyze_font_consistency
-)
-
-from backend.document_analysis.spacing_analysis import (
-    analyze_spacing
-)
-
-from backend.document_analysis.region_anomaly import (
-    analyze_region_anomaly
-)
+from typing import Dict, Any
 
 
-# ==========================================
-# MAIN
-# ==========================================
+# ============================================================
+# RISK SCORING ENGINE
+# ============================================================
+#
+# Purpose:
+# Convert multiple forensic signals into:
+#
+#   - risk_score
+#   - risk_level
+#   - confidence
+#   - verdict
+#   - detected_signals
+#   - explanations
+#
+# IMPORTANT:
+# This is a heuristic forensic risk engine.
+# It does NOT mathematically prove that an image is fake.
+# It combines multiple independent indicators.
+#
+# ============================================================
 
-def analyze_document_risk(
 
-    image_path,
+def calculate_risk_score(
+    ela_score: float = 0.0,
+    edge_density: float = 0.0,
+    wavelet_score: float = 0.0,
+    copy_move_score: float = 0.0,
+    copy_move_detected: bool = False,
+    noise_score: float = 0.0,
+    noise_inconsistency: float = 0.0,
+    metadata_suspicious: bool = False,
+    jpeg_suspicious: bool = False,
+) -> Dict[str, Any]:
 
-    analysis_dir
+    # ========================================================
+    # SAFE VALUE CONVERSION
+    # ========================================================
 
-):
+    try:
+        ela_score = float(ela_score)
+    except (TypeError, ValueError):
+        ela_score = 0.0
 
-    image_path = Path(image_path)
+    try:
+        edge_density = float(edge_density)
+    except (TypeError, ValueError):
+        edge_density = 0.0
 
-    analysis_dir = Path(analysis_dir)
+    try:
+        wavelet_score = float(wavelet_score)
+    except (TypeError, ValueError):
+        wavelet_score = 0.0
 
-    analysis_dir.mkdir(
+    try:
+        copy_move_score = float(copy_move_score)
+    except (TypeError, ValueError):
+        copy_move_score = 0.0
 
-        parents=True,
+    try:
+        noise_score = float(noise_score)
+    except (TypeError, ValueError):
+        noise_score = 0.0
 
-        exist_ok=True
+    try:
+        noise_inconsistency = float(
+            noise_inconsistency
+        )
+    except (TypeError, ValueError):
+        noise_inconsistency = 0.0
+
+    copy_move_detected = bool(
+        copy_move_detected
+    )
+
+    metadata_suspicious = bool(
+        metadata_suspicious
+    )
+
+    jpeg_suspicious = bool(
+        jpeg_suspicious
+    )
+
+
+    # ========================================================
+    # NORMALIZATION
+    # ========================================================
+    #
+    # Different detectors produce values on different scales.
+    #
+    # We normalize them into approximately 0 - 1.
+    #
+    # These thresholds are heuristic and should eventually
+    # be calibrated using a real labeled dataset.
+    #
+    # ========================================================
+
+    ela_normalized = min(
+
+        max(
+
+            ela_score / 0.20,
+
+            0.0
+
+        ),
+
+        1.0
 
     )
 
-    # --------------------------------------
-    # Run all analyses
-    # --------------------------------------
 
-    forensic = analyze_image(
+    wavelet_normalized = min(
 
-        str(image_path),
+        max(
 
-        str(analysis_dir)
+            wavelet_score / 0.50,
 
-    )
+            0.0
 
-    copy_move = detect_copy_move(
+        ),
 
-        str(image_path),
-
-        analysis_dir
+        1.0
 
     )
 
-    metadata = analyze_metadata(
 
-        str(image_path)
+    copy_move_normalized = min(
 
-    )
+        max(
 
-    noise = analyze_noise(
+            copy_move_score,
 
-        str(image_path)
+            0.0
 
-    )
+        ),
 
-    font = analyze_font_consistency(
-
-        str(image_path)
+        1.0
 
     )
 
-    spacing = analyze_spacing(
 
-        str(image_path)
+    noise_normalized = min(
 
-    )
+        max(
 
-    regions = analyze_region_anomaly(
+            noise_inconsistency / 1.0,
 
-        str(image_path)
+            0.0
 
-    )
+        ),
 
-    # --------------------------------------
-    # Risk
-    # --------------------------------------
-
-    score = 0
-
-    findings = []
-
-    # ======================================
-    # ELA
-    # ======================================
-
-    ela = forensic["signals"]["ela_score"]
-
-    if ela > 0.18:
-
-        score += 10
-
-        findings.append(
-
-            "High ELA score"
-
-        )
-
-    # ======================================
-    # Wavelet
-    # ======================================
-
-    wavelet = forensic["signals"]["wavelet_score"]
-
-    if wavelet > 0.25:
-
-        score += 10
-
-        findings.append(
-
-            "Wavelet anomaly"
-
-        )
-
-    # ======================================
-    # Copy Move
-    # ======================================
-
-    if copy_move["copy_move_detected"]:
-
-        score += 30
-
-        findings.append(
-
-            "Copy-Move forgery"
-
-        )
-
-    # ======================================
-    # Metadata
-    # ======================================
-
-    if metadata["suspicious"]:
-
-        score += 15
-
-        findings.append(
-
-            "Editing software metadata"
-
-        )
-
-    # ======================================
-    # Noise
-    # ======================================
-
-    if noise["noise_inconsistency"] > 0.20:
-
-        score += 10
-
-        findings.append(
-
-            "Noise inconsistency"
-
-        )
-
-    # ======================================
-    # Font
-    # ======================================
-
-    font_count = len(
-
-        font["suspicious_words"]
+        1.0
 
     )
 
-    if font_count:
 
-        score += min(
+    # ========================================================
+    # SIGNAL CONTRIBUTIONS
+    # ========================================================
+    #
+    # Copy-move is weighted strongly because your detector
+    # provides direct spatial duplication evidence.
+    #
+    # ELA / Wavelet / Noise are supporting evidence.
+    #
+    # Metadata / JPEG are binary supporting indicators.
+    #
+    # ========================================================
 
-            25,
+    score = 0.0
 
-            font_count * 3
 
-        )
+    # ELA contribution
+    score += (
 
-        findings.append(
+        ela_normalized
 
-            f"{font_count} suspicious words"
+        *
 
-        )
-
-    # ======================================
-    # Layout
-    # ======================================
-
-    if spacing["risk_score"] > 40:
-
-        score += 15
-
-        findings.append(
-
-            "Layout anomaly"
-
-        )
-
-    # ======================================
-    # Region
-    # ======================================
-
-    region_count = len(
-
-        regions["high_risk_regions"]
+        25.0
 
     )
 
-    if region_count:
 
-        score += min(
+    # Wavelet contribution
+    score += (
 
-            20,
+        wavelet_normalized
 
-            region_count * 2
+        *
+
+        15.0
+
+    )
+
+
+    # Copy-move contribution
+    score += (
+
+        copy_move_normalized
+
+        *
+
+        30.0
+
+    )
+
+
+    # Noise inconsistency contribution
+    score += (
+
+        noise_normalized
+
+        *
+
+        15.0
+
+    )
+
+
+    # Metadata anomaly
+    if metadata_suspicious:
+
+        score += 7.5
+
+
+    # JPEG anomaly
+    if jpeg_suspicious:
+
+        score += 7.5
+
+
+    # ========================================================
+    # DIRECT COPY-MOVE BONUS
+    # ========================================================
+    #
+    # If the copy-move detector explicitly detected
+    # manipulation, add additional risk.
+    #
+    # This ensures:
+    #
+    # copy_move_detected = True
+    #
+    # cannot accidentally produce a low-risk result.
+    #
+    # ========================================================
+
+    if copy_move_detected:
+
+        score += 15.0
+
+
+    # ========================================================
+    # CLAMP SCORE
+    # ========================================================
+
+    score = max(
+
+        0.0,
+
+        min(
+
+            100.0,
+
+            score
 
         )
 
-        findings.append(
+    )
 
-            f"{region_count} suspicious regions"
 
-        )
-
-    score = min(
+    score = round(
 
         score,
-
-        100
-
-    )
-
-    # ======================================
-    # Verdict
-    # ======================================
-
-    if score >= 80:
-
-        verdict = "HIGH RISK"
-
-        recommendation = (
-
-            "Strong evidence of manipulation."
-
-        )
-
-    elif score >= 55:
-
-        verdict = "MEDIUM RISK"
-
-        recommendation = (
-
-            "Manual verification recommended."
-
-        )
-
-    elif score >= 30:
-
-        verdict = "LOW RISK"
-
-        recommendation = (
-
-            "Minor anomalies detected."
-
-        )
-
-    else:
-
-        verdict = "AUTHENTIC"
-
-        recommendation = (
-
-            "No significant anomaly detected."
-
-        )
-
-    confidence = round(
-
-        70 + score * 0.3,
 
         2
 
     )
 
-    confidence = min(
 
-        confidence,
+    # ========================================================
+    # DETECTED SIGNALS
+    # ========================================================
 
-        99.9
+    detected_signals = []
+
+
+    explanations = []
+
+
+    # --------------------------------------------------------
+    # COPY-MOVE
+    # --------------------------------------------------------
+
+    if copy_move_detected:
+
+        detected_signals.append(
+
+            "Copy-Move Manipulation"
+
+        )
+
+        explanations.append(
+
+            "Repeated visual regions were detected "
+            "with geometrically consistent feature matches."
+
+        )
+
+
+    elif copy_move_score >= 0.15:
+
+        detected_signals.append(
+
+            "Possible Copy-Move Pattern"
+
+        )
+
+        explanations.append(
+
+            "The image contains a moderate level of "
+            "repeated feature matches that may require review."
+
+        )
+
+
+    # --------------------------------------------------------
+    # ELA
+    # --------------------------------------------------------
+
+    if ela_normalized >= 0.60:
+
+        detected_signals.append(
+
+            "ELA Compression Anomaly"
+
+        )
+
+        explanations.append(
+
+            "Error Level Analysis indicates inconsistent "
+            "JPEG compression behavior across the image."
+
+        )
+
+
+    # --------------------------------------------------------
+    # WAVELET
+    # --------------------------------------------------------
+
+    if wavelet_normalized >= 0.60:
+
+        detected_signals.append(
+
+            "Frequency-Domain Anomaly"
+
+        )
+
+        explanations.append(
+
+            "Wavelet analysis detected unusual frequency "
+            "patterns that may indicate image manipulation."
+
+        )
+
+
+    # --------------------------------------------------------
+    # NOISE
+    # --------------------------------------------------------
+
+    if noise_normalized >= 0.60:
+
+        detected_signals.append(
+
+            "Noise Inconsistency"
+
+        )
+
+        explanations.append(
+
+            "Different image regions exhibit inconsistent "
+            "noise characteristics."
+
+        )
+
+
+    # --------------------------------------------------------
+    # METADATA
+    # --------------------------------------------------------
+
+    if metadata_suspicious:
+
+        detected_signals.append(
+
+            "Suspicious Metadata"
+
+        )
+
+        explanations.append(
+
+            "Image metadata contains indicators associated "
+            "with image editing or processing software."
+
+        )
+
+
+    # --------------------------------------------------------
+    # JPEG
+    # --------------------------------------------------------
+
+    if jpeg_suspicious:
+
+        detected_signals.append(
+
+            "JPEG Compression Anomaly"
+
+        )
+
+        explanations.append(
+
+            "JPEG compression characteristics may indicate "
+            "recompression or editing."
+
+        )
+
+
+    # ========================================================
+    # RISK LEVEL
+    # ========================================================
+
+    if score >= 75:
+
+        risk_level = "CRITICAL"
+
+        verdict = (
+
+            "High Risk - Potential Forgery"
+
+        )
+
+
+    elif score >= 50:
+
+        risk_level = "HIGH"
+
+        verdict = (
+
+            "Suspicious - Possible Forgery"
+
+        )
+
+
+    elif score >= 25:
+
+        risk_level = "MEDIUM"
+
+        verdict = (
+
+            "Moderate Risk - Manual Review Recommended"
+
+        )
+
+
+    else:
+
+        risk_level = "LOW"
+
+        verdict = (
+
+            "No Significant Anomaly Detected"
+
+        )
+
+
+    # ========================================================
+    # CONFIDENCE
+    # ========================================================
+    #
+    # Confidence is based on the number of independent
+    # forensic signals supporting the result.
+    #
+    # This is NOT model probability.
+    #
+    # ========================================================
+
+    signal_count = len(
+
+        detected_signals
 
     )
 
-    print()
 
-    print("========== RISK ENGINE ==========")
+    if signal_count >= 4:
 
-    print("Risk:", score)
+        confidence = 0.90
 
-    print("Verdict:", verdict)
 
-    print("Confidence:", confidence)
+    elif signal_count == 3:
 
-    print("=================================")
+        confidence = 0.82
 
-    print()
+
+    elif signal_count == 2:
+
+        confidence = 0.72
+
+
+    elif signal_count == 1:
+
+        confidence = 0.60
+
+
+    else:
+
+        confidence = 0.45
+
+
+    # ========================================================
+    # FINAL RESULT
+    # ========================================================
 
     return {
 
         "risk_score": score,
 
-        "confidence": confidence,
+        "risk_level": risk_level,
 
-        "overall_verdict": verdict,
+        "verdict": verdict,
 
-        "recommendation": recommendation,
+        "confidence": round(
 
-        "findings": findings,
+            confidence,
 
-        "signals":{
+            2
 
-            "ela": ela,
+        ),
 
-            "wavelet": wavelet,
+        "signals_detected": signal_count,
 
-            "copy_move":
+        "detected_signals": detected_signals,
 
-                copy_move["copy_move_detected"],
-
-            "noise":
-
-                noise["noise_inconsistency"],
-
-            "metadata":
-
-                metadata["suspicious"],
-
-            "font":
-
-                font_count,
-
-            "regions":
-
-                region_count
-
-        }
+        "explanations": explanations
 
     }
