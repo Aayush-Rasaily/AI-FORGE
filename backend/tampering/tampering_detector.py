@@ -47,7 +47,7 @@ ELA_HIGH_THRESHOLD = 25
 
 MIN_ORB_FEATURES = 50
 
-MIN_MATCHES = 8
+MIN_MATCHES = 4
 
 RANSAC_REPROJ_THRESHOLD = 5.0
 
@@ -193,25 +193,16 @@ def perform_ela(
             )
         )
 
-        # ELA suspicion score
+        #ELA suspicion score
         if high_error_ratio > 0.20:
-
             suspicion_score = 0.90
-
         elif high_error_ratio > 0.10:
-
             suspicion_score = 0.70
-
         elif high_error_ratio > 0.05:
-
             suspicion_score = 0.50
-
         elif high_error_ratio > 0.02:
-
             suspicion_score = 0.30
-
         else:
-
             suspicion_score = 0.10
 
         return {
@@ -478,24 +469,19 @@ def detect_copy_move(
         )
 
         # Suspicion score
-        if inliers >= 30 and inlier_ratio >= 0.50:
-
+        if inliers >= 15:
             suspicion_score = 0.95
 
-        elif inliers >= 20 and inlier_ratio >= 0.40:
+        elif inliers >= 10:
+            suspicion_score = 0.75
 
-            suspicion_score = 0.80
+        elif inliers >= 6:
+            suspicion_score = 0.55
 
-        elif inliers >= 12 and inlier_ratio >= 0.30:
-
-            suspicion_score = 0.60
-
-        elif inliers >= 8 and inlier_ratio >= 0.25:
-
-            suspicion_score = 0.40
+        elif inliers >= 3:
+            suspicion_score = 0.35
 
         else:
-
             suspicion_score = 0.10
 
         copy_move_detected = (
@@ -649,21 +635,17 @@ def analyze_edge_inconsistency(
         )
 
         # Conservative suspicion score
-        if variance_std > 5000:
+        if variance_std > 2500:
+            suspicion_score = 0.80
 
-            suspicion_score = 0.70
+        elif variance_std > 1800:
+            suspicion_score = 0.60
 
-        elif variance_std > 3000:
-
-            suspicion_score = 0.50
-
-        elif variance_std > 1500:
-
-            suspicion_score = 0.30
+        elif variance_std > 1200:
+            suspicion_score = 0.40
 
         else:
-
-            suspicion_score = 0.10
+            suspicion_score = 0.15
 
         return {
 
@@ -788,7 +770,7 @@ def analyze_metadata(
 
         else:
 
-            suspicion_score = 0.05
+            suspicion_score = 0.10
 
         return {
 
@@ -928,27 +910,24 @@ def analyze_tampering(
     # more direct manipulation signal.
     # --------------------------------------------------------
 
-    tampering_score = (
-
-        0.35
-        * ela_score
-
-        +
-
-        0.35
-        * copy_move_score
-
-        +
-
-        0.20
-        * edge_score
-
-        +
-
-        0.10
-        * metadata_score
-
+    weighted_score = (
+        0.40 * ela_score +
+        0.25 * copy_move_score +
+        0.25 * edge_score +
+        0.10 * metadata_score
     )
+
+    strongest_signal = max(
+        ela_score,
+        copy_move_score,
+        edge_score
+    )
+
+    tampering_score = (
+        weighted_score * 0.7 +
+        strongest_signal * 0.3
+    )
+
 
     tampering_score = max(
         0.0,
@@ -962,30 +941,25 @@ def analyze_tampering(
     # Determine risk
     # --------------------------------------------------------
 
-    if tampering_score >= 0.75:
-
+    if tampering_score >= 0.70:
+    
         verdict = "HIGHLY_SUSPICIOUS"
-
         severity = "CRITICAL"
 
-    elif tampering_score >= 0.55:
+    elif tampering_score >= 0.50:
 
         verdict = "SUSPICIOUS"
-
         severity = "HIGH"
 
-    elif tampering_score >= 0.30:
+    elif tampering_score >= 0.25:
 
         verdict = "POTENTIALLY_MANIPULATED"
-
         severity = "MEDIUM"
 
     else:
 
         verdict = "NO_STRONG_TAMPERING_SIGNAL"
-
         severity = "LOW"
-
     # --------------------------------------------------------
     # Generate forensic signals
     # --------------------------------------------------------

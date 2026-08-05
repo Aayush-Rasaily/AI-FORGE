@@ -40,7 +40,7 @@ from backend.document_analysis.evidence_fusion import (
     make_json_serializable,
 )
 
-
+from backend.tampering.tampering_detector import analyze_tampering
 # ============================================================
 # SAFE JSON RESPONSE
 # ============================================================
@@ -358,16 +358,27 @@ async def analyze_uploaded_image(
             image_path,
             analysis_dir,
         )
+        tampering_result = analyze_tampering(
+            str(image_path)
+        )
 
         # IMPORTANT:
         # Sanitize result before returning
-        return safe_json_response(
-            {
-                "success": True,
-                "evidence_id": evidence_id,
-                "analysis": result,
-            }
-        )
+        print("\n========== RESPONSE SENT TO FRONTEND ==========")
+        print({
+            "success": True,
+            "evidence_id": evidence_id,
+            "analysis": result,
+            "tampering": tampering_result,
+        })
+        print("===============================================\n")
+
+        return {
+            "success": True,
+            "evidence_id": evidence_id,
+            "analysis": result,
+            "tampering": tampering_result,
+        }
 
     except HTTPException:
 
@@ -423,6 +434,7 @@ async def analyze_evidence(
         evidence_id
     )
 
+
     # -----------------------------------------
     # Analysis directory
     # -----------------------------------------
@@ -441,6 +453,9 @@ async def analyze_evidence(
             image_path,
             analysis_dir,
         )
+        tampering_result = analyze_tampering(
+        str(image_path)
+)
 
         # IMPORTANT:
         # Sanitize before returning
@@ -449,6 +464,7 @@ async def analyze_evidence(
                 "success": True,
                 "evidence_id": evidence_id,
                 "analysis": result,
+                "tampering": tampering_result,
             }
         )
 
@@ -1173,3 +1189,4 @@ async def analyze_copy_move_endpoint(
             status_code=500,
             detail=str(e),
         )
+        
