@@ -223,6 +223,11 @@ function EvidenceUploader({
               await analyzeImage(
                 evidenceId
               );
+              console.log("FULL RESPONSE");
+              console.log(analysisResult);
+
+              console.log("TAMPERING");
+              console.log(analysisResult.tampering);
 
 
             console.log(
@@ -249,7 +254,10 @@ function EvidenceUploader({
                 "completed",
 
               analysis:
-                analysisResult.analysis
+                analysisResult.analysis,
+
+              tampering:
+                analysisResult.tampering
 
             });
 
@@ -361,27 +369,14 @@ function EvidenceUploader({
 
 
           analysisResults.push({
+          filename: file.name,
+          evidenceId: evidenceId,
+          fileType: "image",
+          status: "completed",
 
-            filename:
-              file.name,
-
-            evidenceId:
-              null,
-
-            fileType:
-              analysisType,
-
-            status:
-              "failed",
-
-            message:
-
-              fileError?.message ||
-
-              "Analysis failed for this file."
-
-          });
-
+          analysis: analysisResult.analysis,
+          tampering: analysisResult.tampering
+      });
         }
 
       }

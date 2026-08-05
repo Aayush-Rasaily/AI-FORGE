@@ -20,7 +20,8 @@ function computeAggregateRisk(
   imageResults,
   documentResult,
   signatureResult,
-  videoResult
+  videoResult,
+  tamperingResult
 ) {
 
   const scores = [];
@@ -59,6 +60,13 @@ function computeAggregateRisk(
     scores.push(Number(videoResult.summary.risk_score));
 
   }
+  if (tamperingResult?.tampering_percentage) {
+
+    scores.push(
+        Number(tamperingResult.tampering_percentage)
+    );
+
+    }
 
 
   if (scores.length === 0) {
@@ -81,7 +89,9 @@ function UnifiedFraudDashboard({
 
     signatureResult = null,
 
-    videoResult = null
+    videoResult = null,
+    
+    tamperingResult = null
 
 }) {
 
@@ -93,7 +103,8 @@ function UnifiedFraudDashboard({
       imageResults,
       documentResult,
       signatureResult,
-      videoResult
+      videoResult,
+        tamperingResult
     );
 
 
@@ -121,6 +132,12 @@ function UnifiedFraudDashboard({
         name: "Video",
         status: videoResult ? 1 : 0,
         label: videoResult ? "Available" : "Pending",
+      },
+
+      {
+        name: "Tampering",
+        status: tamperingResult ? 1 : 0,
+        label: tamperingResult ? tamperingResult.verdict : "Pending",
       },
 
     ];
@@ -349,6 +366,33 @@ function UnifiedFraudDashboard({
                         }
 
                     </p>
+
+                </GlassCard>
+                {/* TAMPERING */}
+
+                <GlassCard gradient="orange" hover={false}>
+
+                    <p className="text-sm text-slate-400">
+
+                        Tampering Detection
+
+                    </p>
+
+                    <p className="mt-3 text-xl font-bold text-white">
+
+                        {tamperingResult
+                            ? tamperingResult.verdict
+                            : "No Analysis"}
+
+                    </p>
+
+                    {tamperingResult && (
+
+                        <StatusBadge
+                            status={tamperingResult.verdict}
+                        />
+
+                    )}
 
                 </GlassCard>
 
@@ -651,6 +695,96 @@ function UnifiedFraudDashboard({
                     </div>
 
                 </GlassCard>
+
+            )}
+
+            {/* ================================= */}
+            {/* TAMPERING RESULT                  */}
+            {/* ================================= */}
+
+            {tamperingResult && (
+
+            <GlassCard gradient="orange" hover={false}>
+
+                <h3 className="text-xl font-bold text-white">
+
+                    Tampering Detection
+
+                </h3>
+
+                <div className="mt-6 grid gap-4 md:grid-cols-3">
+
+                    <div className="rounded-lg bg-slate-800/50 p-4">
+
+                        <p className="text-slate-400">
+
+                            Verdict
+
+                        </p>
+
+                        <p className="mt-2 text-xl font-bold text-white">
+
+                            {tamperingResult.verdict}
+
+                        </p>
+
+                    </div>
+
+                    <div className="rounded-lg bg-slate-800/50 p-4">
+
+                        <p className="text-slate-400">
+
+                            Severity
+
+                        </p>
+
+                        <p className="mt-2 text-xl font-bold text-white">
+
+                            {tamperingResult.severity}
+
+                        </p>
+
+                    </div>
+
+                    <div className="rounded-lg bg-slate-800/50 p-4">
+
+                        <p className="text-slate-400">
+
+                            Tampering Score
+
+                        </p>
+
+                        <p className="mt-2 text-xl font-bold text-white">
+
+                            {tamperingResult.tampering_percentage}%
+
+                        </p>
+
+                    </div>
+
+                </div>
+
+                <div className="mt-6">
+
+                    <h4 className="mb-2 font-semibold text-white">
+
+                        Detected Signals
+
+                    </h4>
+
+                    <ul className="list-disc space-y-2 pl-6 text-slate-300">
+
+                        {tamperingResult.signals?.map((signal, index) => (
+
+                            <li key={index}>{signal}</li>
+
+                        ))}
+
+                    </ul>
+
+                </div>
+
+            </GlassCard>
 
             )}
 

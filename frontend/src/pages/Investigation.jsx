@@ -23,9 +23,7 @@ import VideoForensics
 import UnifiedFraudDashboard
     from "../components/UnifiedFraudDashboard";
 
-
 function Investigation() {
-
     // ==========================================
     // ANALYSIS TYPE
     // ==========================================
@@ -403,6 +401,7 @@ function Investigation() {
             )}
 
 
+
             {/* ================================= */}
             {/* UNIFIED FRAUD DASHBOARD           */}
             {/* ================================= */}
@@ -445,5 +444,5 @@ function Investigation() {
 
 }
 
-
+    
 export default Investigation;

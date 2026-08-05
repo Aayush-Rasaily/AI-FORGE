@@ -712,3 +712,36 @@ export async function analyzeVideo(
     }
 
 }
+
+// ==========================================
+// Tampering Detection
+// ==========================================
+
+export async function analyzeTampering(evidenceId) {
+
+    if (!evidenceId) {
+        throw new Error("Evidence ID is required");
+    }
+
+    const response = await fetch(
+        `${API_BASE_URL}/api/evidence/analyze/${evidenceId}`, {
+            method: "POST",
+        }
+    );
+
+    if (!response.ok) {
+
+        const errorMessage =
+            await getApiError(
+                response,
+                "Tampering analysis failed"
+            );
+
+        throw new Error(errorMessage);
+    }
+
+    const data = await response.json();
+
+    // Return ONLY the tampering object
+    return data.tampering;
+}

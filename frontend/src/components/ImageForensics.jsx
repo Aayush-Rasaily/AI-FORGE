@@ -80,6 +80,8 @@ function ImageForensics({
                         item.analysis ||
                         {};
 
+                    const tampering = item.tampering || {};
+
 
                     const signals =
                         analysis.signals ||
@@ -101,6 +103,28 @@ function ImageForensics({
                             analysis.forensic_score || 0
                         );
 
+                    // ==========================================
+                    // TAMPERING RESULT
+                    // ==========================================
+
+                    const tamperingVerdict =
+                        tampering.verdict || "Unknown";
+
+                    const tamperingSeverity =
+                        tampering.severity || "Unknown";
+
+                    const tamperingScore =
+                        Number(
+                            tampering.tampering_score || 0
+                        ) * 100;
+
+                    const tamperingConfidence =
+                        Number(
+                            tampering.confidence || 0
+                        );
+
+                    const tamperingSignals =
+                        tampering.signals || [];
 
                     // ==========================================
                     // GET ARTIFACT PATHS FROM BACKEND
@@ -384,6 +408,103 @@ function ImageForensics({
                                     </div>
 
                                 </div>
+
+                            </div>
+
+                            {/* ==========================================
+                                TAMPERING DETECTION
+                            ========================================== */}
+
+                            <div className="mt-8 rounded-xl border border-orange-800 bg-slate-900 p-6">
+
+                                <h4 className="text-lg font-semibold text-orange-400">
+
+                                    Tampering Detection
+
+                                </h4>
+
+                                <div className="mt-6 grid gap-4 md:grid-cols-4">
+
+                                    <div>
+
+                                        <p className="text-sm text-slate-400">
+                                            Verdict
+                                        </p>
+
+                                        <p className="mt-2 text-lg font-bold text-white">
+                                            {tamperingVerdict}
+                                        </p>
+
+                                    </div>
+
+                                    <div>
+
+                                        <p className="text-sm text-slate-400">
+                                            Severity
+                                        </p>
+
+                                        <p className="mt-2 text-lg font-bold text-white">
+                                            {tamperingSeverity}
+                                        </p>
+
+                                    </div>
+
+                                    <div>
+
+                                        <p className="text-sm text-slate-400">
+                                            Tampering Score
+                                        </p>
+
+                                        <p className="mt-2 text-lg font-bold text-white">
+                                            {tamperingScore.toFixed(2)}%
+                                        </p>
+
+                                    </div>
+
+                                    <div>
+
+                                        <p className="text-sm text-slate-400">
+                                            Confidence
+                                        </p>
+
+                                        <p className="mt-2 text-lg font-bold text-white">
+                                            {(tamperingConfidence * 100).toFixed(2)}%
+                                        </p>
+
+                                    </div>
+
+                                </div>
+
+                                {tamperingSignals.length > 0 && (
+
+                                    <div className="mt-6">
+
+                                        <p className="mb-3 font-semibold text-white">
+
+                                            Detected Signals
+
+                                        </p>
+
+                                        <ul className="space-y-2">
+
+                                            {tamperingSignals.map((signal, index) => (
+
+                                                <li
+                                                    key={index}
+                                                    className="rounded-lg border border-orange-800 bg-orange-950/20 p-3 text-orange-300"
+                                                >
+
+                                                    • {signal}
+
+                                                </li>
+
+                                            ))}
+
+                                        </ul>
+
+                                    </div>
+
+                                )}
 
                             </div>
 
