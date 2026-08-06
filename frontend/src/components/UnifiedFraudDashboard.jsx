@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import {
   BarChart,
   Bar,
@@ -11,6 +12,7 @@ import {
 import GlassCard from "./ui/GlassCard";
 import RiskGauge from "./ui/RiskGauge";
 import StatusBadge from "./ui/StatusBadge";
+import { generateReport } from "../services/api";
 
 /* ========================================= */
 /* Compute aggregate risk from evidence      */
@@ -94,6 +96,15 @@ function UnifiedFraudDashboard({
     tamperingResult = null
 
 }) {
+
+    useEffect(() => {
+      const ids = imageResults
+        .map((item) => item.evidenceId || item.evidence_id)
+        .filter(Boolean);
+      ids.forEach((id) => {
+        generateReport(id).catch(() => {});
+      });
+    }, [imageResults]);
 
     /* ========================================= */
     /* Derived risk metrics (display only)       */

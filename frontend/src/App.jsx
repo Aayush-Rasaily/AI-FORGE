@@ -1,28 +1,24 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import Dashboard from "./pages/Dashboard";
+import Cases from "./pages/Cases";
 import Investigation from "./pages/Investigation";
 import SignatureVerification from "./pages/SignatureVerification";
 import CopyMoveDetection from "./pages/CopyMoveDetection";
+import { BackendProvider } from "./context/BackendConnectivity";
 
 function App() {
 
   return (
+    <BackendProvider>
     <BrowserRouter>
 
       <Routes>
 
         {/* Dashboard */}
-        <Route
-          path="/"
-          element={<Dashboard />}
-        />
-
-        {/* Investigation */}
-        <Route
-          path="/investigation"
-          element={<Investigation />}
-        />
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/cases" element={<Cases />} />
+        <Route path="/investigation" element={<Investigation />} />
 
         {/* Signature Verification */}
         <Route
@@ -45,6 +41,7 @@ function App() {
       </Routes>
 
     </BrowserRouter>
+    </BackendProvider>
   );
 
 }

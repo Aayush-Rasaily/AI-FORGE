@@ -4,6 +4,9 @@ import {
   FileText,
   Video,
   LayoutDashboard,
+  Scale,
+  Layers,
+  ScanFace,
 } from "lucide-react";
 
 import GlassCard from "./ui/GlassCard";
@@ -57,6 +60,33 @@ function AnalysisSelector({
       activeColor:
         "border-red-500 bg-red-500/10 shadow-red-500/10",
       iconColor: "text-red-400",
+    },
+
+    {
+      id: "jury",
+      label: "AI Jury System",
+      description: "Multi-agent ensemble verdict with explainable reasoning",
+      icon: Scale,
+      activeColor: "border-violet-500 bg-violet-500/10 shadow-violet-500/10",
+      iconColor: "text-violet-400",
+    },
+
+    {
+      id: "heatmap",
+      label: "Attention Heatmap",
+      description: "Fused ELA, wavelet, copy-move & tampering heatmap overlay",
+      icon: Layers,
+      activeColor: "border-orange-500 bg-orange-500/10 shadow-orange-500/10",
+      iconColor: "text-orange-400",
+    },
+
+    {
+      id: "deepfake",
+      label: "DeepFake Detection",
+      description: "Face swap, GAN artifacts, blink & compression analysis",
+      icon: ScanFace,
+      activeColor: "border-rose-500 bg-rose-500/10 shadow-rose-500/10",
+      iconColor: "text-rose-400",
     },
 
     {

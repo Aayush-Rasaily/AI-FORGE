@@ -1,687 +1,523 @@
-import ArtifactCard from "./ArtifactCard";
-
+import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
 import {
-    getArtifactUrl
-} from "../services/api";
+  Scan,
+  GitBranch,
+  Waves,
+  Copy,
+  Fingerprint,
+  Loader2,
+  Palette,
+  Grid3x3,
+  Radio,
+} from "lucide-react";
 
+import ArtifactCard from "./ArtifactCard";
+import RiskGauge from "./ui/RiskGauge";
+import TamperingCard from "./ui/TamperingCard";
+import ProgressCard from "./ui/ProgressCard";
+import StatusBadge from "./ui/StatusBadge";
+import GanDetectionPanel from "./ui/GanDetectionPanel";
+import FaceForensicsPanel from "./ui/FaceForensicsPanel";
+import MetadataForensicsPanel from "./ui/MetadataForensicsPanel";
+import ExplainabilityPanel from "./ui/ExplainabilityPanel";
+import { downloadPDF, getArtifactUrl, getUnifiedArtifactUrl, getArtifactsStatus } from "../services/api";
+import { Download } from "lucide-react";
+import ForensicViewer from "./ForensicViewer";
+import ForensicDashboard from "./ForensicDashboard";
 
-function ImageForensics({
-    results = []
-}) {
+/* ========================================= */
+/* Forensic report for a single evidence item */
+/* ========================================= */
 
-    // ==========================================
-    // EMPTY STATE
-    // ==========================================
+function ForensicReport({ item, index }) {
+  const filename = item.filename || `Evidence ${index + 1}`;
+  const evidenceId = item.evidenceId || item.evidence_id || "";
+  const dashboard = item.dashboard || {};
+  const juryData = item.jury || {};
+  const juryFusion = juryData.fusion || juryData;
+  const [analysis, setAnalysis] = useState(() => ({
+    ...(item.analysis || {}),
+    risk_score: item.risk ?? item.analysis?.risk_score,
+    confidence: item.confidence ?? item.analysis?.confidence,
+    verdict: item.analysis?.verdict || dashboard.verdict,
+    explanation: item.analysis?.explanation || dashboard.explanation,
+    recommendation: item.analysis?.recommendation || dashboard.recommendation,
+  }));
+  const [artifactsPending, setArtifactsPending] = useState(
+    item.artifactsPending ?? false
+  );
+  const [reportsPending, setReportsPending] = useState(item.reportsPending ?? true);
+  const [reportDownloading, setReportDownloading] = useState(false);
+  const [reportError, setReportError] = useState("");
+  const tampering = item.tampering || {};
+  const signals = analysis.signals || {};
+  const multispectral = analysis.multispectral || {};
+  const spectralFusion = multispectral.fusion || {};
+  const spectralDetectors = multispectral.detectors || {};
+  const ganDetection = analysis.ai_generation || analysis.gan_detection || {};
+  const faceForensics = analysis.face_forensics || {};
+  const metadataForensics = analysis.metadata_forensics || {};
+  const explainability = analysis.explainability || {};
+  const artifacts = { ...(item.artifacts || {}), ...(analysis.artifacts || {}) };
 
-    if (
-        !results ||
-        results.length === 0
-    ) {
+  const riskScore = Math.min(
+    100,
+    Math.max(Number(item.risk ?? analysis.risk_score ?? dashboard.risk_score ?? 0), 0)
+  );
+  const verdict = analysis.verdict || dashboard.verdict || "Unknown";
+  const scanMode = analysis.scan_mode || item.scanMode;
 
-        return (
+  useEffect(() => {
+    setAnalysis({
+      ...(item.analysis || {}),
+      risk_score: item.risk ?? item.analysis?.risk_score,
+      confidence: item.confidence ?? item.analysis?.confidence,
+      verdict: item.analysis?.verdict || dashboard.verdict,
+      explanation: item.analysis?.explanation || dashboard.explanation,
+      recommendation: item.analysis?.recommendation || dashboard.recommendation,
+      artifacts: { ...(item.artifacts || {}), ...(item.analysis?.artifacts || {}) },
+    });
+    setArtifactsPending(item.artifactsPending ?? false);
+    setReportsPending(item.reportsPending ?? true);
+  }, [item, dashboard.verdict, dashboard.explanation, dashboard.recommendation]);
 
-            <div className="mt-10 rounded-xl glass-card p-8 text-center">
+  useEffect(() => {
+    if (!artifactsPending || !evidenceId) return undefined;
 
-                <h2 className="text-xl font-semibold text-slate-200">
-                    Forensic Analysis Report
-                </h2>
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 12;
 
-                <p className="mt-3 text-slate-400">
-                    No forensic analysis results available.
-                </p>
+    const poll = async () => {
+      if (cancelled || attempts >= maxAttempts) {
+        if (attempts >= maxAttempts) setArtifactsPending(false);
+        return;
+      }
+      attempts += 1;
+      try {
+        const status = await getArtifactsStatus(evidenceId);
+        if (cancelled) return;
+        if (status.status === "ready" && status.artifacts) {
+          setArtifactsPending(false);
+          setAnalysis((prev) => ({
+            ...prev,
+            artifacts: { ...(prev.artifacts || {}), ...status.artifacts },
+            artifacts_pending: false,
+          }));
+        }
+      } catch {
+        /* retry */
+      }
+    };
 
-            </div>
+    poll();
+    const interval = setInterval(poll, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [artifactsPending, evidenceId]);
 
-        );
+  useEffect(() => {
+    if (!reportsPending || !evidenceId) return undefined;
 
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    const poll = async () => {
+      if (cancelled || attempts >= maxAttempts) {
+        if (attempts >= maxAttempts) setReportsPending(false);
+        return;
+      }
+      attempts += 1;
+      try {
+        const { getReportStatus, generateReport } = await import("../services/api");
+        if (attempts === 1) await generateReport(evidenceId);
+        const status = await getReportStatus(evidenceId);
+        if (cancelled) return;
+        if (status.status === "completed" || status.report_ready || status.ready) {
+          setReportsPending(false);
+        } else if (status.status === "failed") {
+          setReportsPending(false);
+        }
+      } catch {
+        /* retry */
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 800);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [reportsPending, evidenceId]);
+
+  const moduleScores = [
+    {
+      icon: Scan,
+      title: "ELA",
+      score: Number(signals.ela_score || 0) * 100,
+    },
+    {
+      icon: GitBranch,
+      title: "Edge Detection",
+      score: Number(signals.edge_density || 0) * 100,
+    },
+    {
+      icon: Waves,
+      title: "Wavelet",
+      score: Number(signals.wavelet_score || 0) * 100,
+    },
+    {
+      icon: Copy,
+      title: "Copy-Move",
+      score: Number(signals.copy_move_score || 0) * 100,
+    },
+  ];
+
+  const spectralScores = [
+    { icon: Palette, title: "RGB", key: "rgb" },
+    { icon: Palette, title: "HSV", key: "hsv" },
+    { icon: Palette, title: "LAB", key: "lab" },
+    { icon: Palette, title: "YCbCr", key: "ycbcr" },
+    { icon: Radio, title: "Frequency", key: "frequency" },
+    { icon: Grid3x3, title: "JPEG Block", key: "jpeg_block" },
+  ].map((mod) => ({
+    ...mod,
+    score: Number(
+      spectralDetectors[mod.key]?.score ??
+        signals[`${mod.key}_score`] ??
+        0
+    ) * 100,
+    explanation: spectralDetectors[mod.key]?.explanation || "",
+  }));
+
+  const artifactUrl = (type) => {
+    const fromAnalysis = artifacts[type];
+    if (fromAnalysis) return getArtifactUrl(fromAnalysis);
+    if (evidenceId) return getUnifiedArtifactUrl(evidenceId, type);
+    return "";
+  };
+
+  const artifactItems = [
+    { key: "ela", title: "Error Level Analysis", description: "Compression anomaly heatmap" },
+    { key: "edges", title: "Edge Detection", description: "Structural boundary overlay" },
+    { key: "wavelet", title: "Wavelet Analysis", description: "Frequency manipulation map" },
+    { key: "copy_move", title: "Copy-Move Detection", description: "Matched keypoint visualization" },
+  ].map((item) => ({
+    ...item,
+    url: artifactUrl(item.key),
+  }));
+
+  const explanation = analysis.explanation || analysis.recommendation || "";
+
+  const handleDownloadPdf = async () => {
+    if (!evidenceId || reportDownloading) return;
+    setReportDownloading(true);
+    setReportError("");
+    try {
+      await downloadPDF(evidenceId, "full");
+    } catch (err) {
+      setReportError(err.message || "Unable to generate report.");
+    } finally {
+      setReportDownloading(false);
     }
-
-
-    return (
-
-        <div className="mt-10 space-y-10">
-
-            {/* ==========================================
-                TITLE
-            ========================================== */}
-
-            <div>
-
-                <h2 className="text-2xl font-bold text-white">
-                    Forensic Analysis Report
-                </h2>
-
-                <p className="mt-2 text-slate-400">
-                    Detailed forensic analysis of uploaded evidence.
-                </p>
-
-            </div>
-
-
-            {/* ==========================================
-                LOOP THROUGH RESULTS
-            ========================================== */}
-
-            {results.map(
-                (item, index) => {
-
-                    const filename =
-                        item.filename ||
-                        `Evidence ${index + 1}`;
-
-
-                    const evidenceId =
-                        item.evidenceId ||
-                        item.evidence_id ||
-                        "";
-
-
-                    const analysis =
-                        item.analysis ||
-                        {};
-
-                    const tampering = item.tampering || {};
-
-
-                    const signals =
-                        analysis.signals ||
-                        {};
-
-
-                    const artifacts =
-                        analysis.artifacts ||
-                        {};
-
-
-                    const verdict =
-                        analysis.verdict ||
-                        "Unknown";
-
-
-                    const forensicScore =
-                        Number(
-                            analysis.forensic_score || 0
-                        );
-
-                    // ==========================================
-                    // TAMPERING RESULT
-                    // ==========================================
-
-                    const tamperingVerdict =
-                        tampering.verdict || "Unknown";
-
-                    const tamperingSeverity =
-                        tampering.severity || "Unknown";
-
-                    const tamperingScore =
-                        Number(
-                            tampering.tampering_score || 0
-                        ) * 100;
-
-                    const tamperingConfidence =
-                        Number(
-                            tampering.confidence || 0
-                        );
-
-                    const tamperingSignals =
-                        tampering.signals || [];
-
-                    // ==========================================
-                    // GET ARTIFACT PATHS FROM BACKEND
-                    // ==========================================
-
-                    const elaPath =
-                        artifacts.ela ||
-                        "";
-
-
-                    const edgesPath =
-                        artifacts.edges ||
-                        "";
-
-
-                    const waveletPath =
-                        artifacts.wavelet ||
-                        "";
-
-
-                    const copyMovePath =
-                        artifacts.copy_move ||
-                        "";
-
-
-                    // ==========================================
-                    // CONVERT PATHS TO FULL BACKEND URL
-                    // ==========================================
-
-                    const elaUrl =
-                        elaPath
-                            ? getArtifactUrl(
-                                elaPath
-                            )
-                            : "";
-
-
-                    const edgesUrl =
-                        edgesPath
-                            ? getArtifactUrl(
-                                edgesPath
-                            )
-                            : "";
-
-
-                    const waveletUrl =
-                        waveletPath
-                            ? getArtifactUrl(
-                                waveletPath
-                            )
-                            : "";
-
-
-                    const copyMoveUrl =
-                        copyMovePath
-                            ? getArtifactUrl(
-                                copyMovePath
-                            )
-                            : "";
-
-
-                    // ==========================================
-                    // DEBUG
-                    // ==========================================
-
-                    console.log(
-                        "Forensic Analysis Result:",
-                        {
-                            filename,
-                            evidenceId,
-                            analysis,
-                            artifacts
-                        }
-                    );
-
-
-                    console.log(
-                        "Artifact URLs:",
-                        {
-                            elaUrl,
-                            edgesUrl,
-                            waveletUrl,
-                            copyMoveUrl
-                        }
-                    );
-
-
-                    return (
-
-                        <div
-                            key={
-                                evidenceId ||
-                                index
-                            }
-
-                            className="rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-xl"
-                        >
-
-                            {/* ==========================================
-                                HEADER
-                            ========================================== */}
-
-                            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-
-                                <div>
-
-                                    <h3 className="text-xl font-bold text-white">
-                                        {filename}
-                                    </h3>
-
-
-                                    {evidenceId && (
-
-                                        <p className="mt-1 text-sm text-slate-500">
-
-                                            Evidence ID:
-                                            {" "}
-                                            {evidenceId}
-
-                                        </p>
-
-                                    )}
-
-                                </div>
-
-
-                                {/* VERDICT */}
-
-                                <div
-                                    className={`
-                                        rounded-lg px-4 py-2 text-sm font-semibold
-                                        ${
-                                            verdict === "Authentic"
-                                                ? "bg-green-950 text-green-400"
-                                                : verdict === "Suspicious"
-                                                ? "bg-yellow-950 text-yellow-400"
-                                                : "bg-red-950 text-red-400"
-                                        }
-                                    `}
-                                >
-
-                                    {verdict}
-
-                                </div>
-
-                            </div>
-
-
-                            {/* ==========================================
-                                FORENSIC SCORE
-                            ========================================== */}
-
-                            <div className="mt-6 rounded-xl border border-slate-800 bg-slate-900 p-5">
-
-                                <div className="flex items-center justify-between">
-
-                                    <span className="font-medium text-slate-300">
-                                        Overall Forensic Score
-                                    </span>
-
-
-                                    <span className="text-2xl font-bold text-white">
-
-                                        {forensicScore.toFixed(4)}
-
-                                    </span>
-
-                                </div>
-
-
-                                <div className="mt-4 h-3 w-full overflow-hidden rounded-full bg-slate-800">
-
-                                    <div
-
-                                        className="h-full rounded-full bg-blue-500 transition-all"
-
-                                        style={{
-                                            width: `${Math.min(
-                                                forensicScore * 100,
-                                                100
-                                            )}%`
-                                        }}
-
-                                    />
-
-                                </div>
-
-                            </div>
-
-
-                            {/* ==========================================
-                                FORENSIC SIGNALS
-                            ========================================== */}
-
-                            <div className="mt-8">
-
-                                <h4 className="text-lg font-semibold text-white">
-                                    Forensic Signals
-                                </h4>
-
-
-                                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-
-                                    {/* ELA */}
-
-                                    <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-
-                                        <p className="text-sm text-slate-400">
-                                            ELA Score
-                                        </p>
-
-
-                                        <p className="mt-2 text-2xl font-bold text-white">
-
-                                            {Number(
-                                                signals.ela_score || 0
-                                            ).toFixed(4)}
-
-                                        </p>
-
-                                    </div>
-
-
-                                    {/* EDGE */}
-
-                                    <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-
-                                        <p className="text-sm text-slate-400">
-                                            Edge Density
-                                        </p>
-
-
-                                        <p className="mt-2 text-2xl font-bold text-white">
-
-                                            {Number(
-                                                signals.edge_density || 0
-                                            ).toFixed(4)}
-
-                                        </p>
-
-                                    </div>
-
-
-                                    {/* WAVELET */}
-
-                                    <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-
-                                        <p className="text-sm text-slate-400">
-                                            Wavelet Score
-                                        </p>
-
-
-                                        <p className="mt-2 text-2xl font-bold text-white">
-
-                                            {Number(
-                                                signals.wavelet_score || 0
-                                            ).toFixed(4)}
-
-                                        </p>
-
-                                    </div>
-
-
-                                    {/* COPY MOVE */}
-
-                                    <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-
-                                        <p className="text-sm text-slate-400">
-                                            Copy-Move Score
-                                        </p>
-
-
-                                        <p className="mt-2 text-2xl font-bold text-white">
-
-                                            {Number(
-                                                signals.copy_move_score || 0
-                                            ).toFixed(4)}
-
-                                        </p>
-
-                                    </div>
-
-                                </div>
-
-                            </div>
-
-                            {/* ==========================================
-                                TAMPERING DETECTION
-                            ========================================== */}
-
-                            <div className="mt-8 rounded-xl border border-orange-800 bg-slate-900 p-6">
-
-                                <h4 className="text-lg font-semibold text-orange-400">
-
-                                    Tampering Detection
-
-                                </h4>
-
-                                <div className="mt-6 grid gap-4 md:grid-cols-4">
-
-                                    <div>
-
-                                        <p className="text-sm text-slate-400">
-                                            Verdict
-                                        </p>
-
-                                        <p className="mt-2 text-lg font-bold text-white">
-                                            {tamperingVerdict}
-                                        </p>
-
-                                    </div>
-
-                                    <div>
-
-                                        <p className="text-sm text-slate-400">
-                                            Severity
-                                        </p>
-
-                                        <p className="mt-2 text-lg font-bold text-white">
-                                            {tamperingSeverity}
-                                        </p>
-
-                                    </div>
-
-                                    <div>
-
-                                        <p className="text-sm text-slate-400">
-                                            Tampering Score
-                                        </p>
-
-                                        <p className="mt-2 text-lg font-bold text-white">
-                                            {tamperingScore.toFixed(2)}%
-                                        </p>
-
-                                    </div>
-
-                                    <div>
-
-                                        <p className="text-sm text-slate-400">
-                                            Confidence
-                                        </p>
-
-                                        <p className="mt-2 text-lg font-bold text-white">
-                                            {(tamperingConfidence * 100).toFixed(2)}%
-                                        </p>
-
-                                    </div>
-
-                                </div>
-
-                                {tamperingSignals.length > 0 && (
-
-                                    <div className="mt-6">
-
-                                        <p className="mb-3 font-semibold text-white">
-
-                                            Detected Signals
-
-                                        </p>
-
-                                        <ul className="space-y-2">
-
-                                            {tamperingSignals.map((signal, index) => (
-
-                                                <li
-                                                    key={index}
-                                                    className="rounded-lg border border-orange-800 bg-orange-950/20 p-3 text-orange-300"
-                                                >
-
-                                                    • {signal}
-
-                                                </li>
-
-                                            ))}
-
-                                        </ul>
-
-                                    </div>
-
-                                )}
-
-                            </div>
-
-
-                            {/* ==========================================
-                                COPY MOVE DETAILS
-                            ========================================== */}
-
-                            <div className="mt-6 rounded-xl border border-slate-800 bg-slate-900 p-5">
-
-                                <h4 className="font-semibold text-white">
-                                    Copy-Move Detection
-                                </h4>
-
-
-                                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-
-                                    <div>
-
-                                        <p className="text-sm text-slate-400">
-                                            Detection Status
-                                        </p>
-
-
-                                        <p
-                                            className={
-                                                signals.copy_move_detected
-                                                    ? "mt-1 font-semibold text-red-400"
-                                                    : "mt-1 font-semibold text-green-400"
-                                            }
-                                        >
-
-                                            {
-                                                signals.copy_move_detected
-                                                    ? "Potential Duplicate Region Detected"
-                                                    : "No Duplicate Region Detected"
-                                            }
-
-                                        </p>
-
-                                    </div>
-
-
-                                    <div>
-
-                                        <p className="text-sm text-slate-400">
-                                            Matched Points
-                                        </p>
-
-
-                                        <p className="mt-1 font-semibold text-white">
-
-                                            {
-                                                signals.matched_points || 0
-                                            }
-
-                                        </p>
-
-                                    </div>
-
-
-                                    <div>
-
-                                        <p className="text-sm text-slate-400">
-                                            RANSAC Inliers
-                                        </p>
-
-
-                                        <p className="mt-1 font-semibold text-white">
-
-                                            {
-                                                signals.ransac_inliers || 0
-                                            }
-
-                                        </p>
-
-                                    </div>
-
-                                </div>
-
-                            </div>
-
-
-                            {/* ==========================================
-                                FORENSIC VISUALIZATIONS
-                            ========================================== */}
-
-                            <div className="mt-8">
-
-                                <h4 className="text-lg font-semibold text-white">
-                                    Forensic Visualizations
-                                </h4>
-
-
-                                <p className="mt-2 text-sm text-slate-400">
-                                    Visual forensic artifacts generated during analysis.
-                                </p>
-
-
-                                <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
-
-
-                                    {/* ELA */}
-
-                                    <ArtifactCard
-
-                                        title="Error Level Analysis"
-
-                                        description="Compression anomaly detection"
-
-                                        artifactUrl={
-                                            elaUrl
-                                        }
-
-                                    />
-
-
-                                    {/* EDGES */}
-
-                                    <ArtifactCard
-
-                                        title="Edge Detection"
-
-                                        description="Structural boundary analysis"
-
-                                        artifactUrl={
-                                            edgesUrl
-                                        }
-
-                                    />
-
-
-                                    {/* WAVELET */}
-
-                                    <ArtifactCard
-
-                                        title="Wavelet Analysis"
-
-                                        description="High-frequency artifact detection"
-
-                                        artifactUrl={
-                                            waveletUrl
-                                        }
-
-                                    />
-
-
-                                    {/* COPY MOVE */}
-
-                                    <ArtifactCard
-
-                                        title="Copy-Move Detection"
-
-                                        description="Duplicate region detection"
-
-                                        artifactUrl={
-                                            copyMoveUrl
-                                        }
-
-                                    />
-
-                                </div>
-
-                            </div>
-
-                        </div>
-
-                    );
-
-                }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 24 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.1, duration: 0.5 }}
+      className="space-y-8"
+    >
+      {/* Header */}
+      <div className="flex flex-col gap-4 rounded-2xl border border-[#1F2937] bg-[#111827] p-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10 border border-blue-500/20">
+            <Fingerprint className="h-6 w-6 text-blue-400" />
+          </div>
+          <div>
+            <h3 className="text-xl font-bold text-white">{filename}</h3>
+            {evidenceId && (
+              <p className="mt-0.5 font-mono text-xs text-slate-500">
+                {evidenceId}
+              </p>
             )}
-
+          </div>
         </div>
+        <div className="flex items-center gap-3">
+          {evidenceId && (
+            <button
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={reportDownloading}
+              className="flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-400 transition hover:bg-cyan-500/20 disabled:opacity-50"
+            >
+              {reportDownloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              {reportDownloading ? "Generating…" : "Export PDF"}
+            </button>
+          )}
+          <StatusBadge status={verdict} />
+        </div>
+      </div>
 
-    );
+      {reportError && (
+        <p className="text-sm text-red-400">{reportError}</p>
+      )}
 
+      {artifactsPending && (
+        <div className="flex items-center gap-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-sm text-cyan-200 backdrop-blur-sm">
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+          <span>Generating forensic visualizations… Images load automatically when ready.</span>
+        </div>
+      )}
+
+      <ForensicDashboard analysis={{ ...analysis, risk_fusion: analysis.risk_fusion || dashboard.risk_fusion, jury: juryData }} />
+
+      {juryFusion?.verdict && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-6"
+        >
+          <h4 className="text-sm font-semibold uppercase tracking-wide text-violet-400">AI Jury Verdict</h4>
+          <p className="mt-2 text-xl font-bold text-white">{juryFusion.verdict || juryFusion.final_verdict}</p>
+          {juryFusion.confidence != null && (
+            <p className="mt-1 text-sm text-slate-400">Confidence: {Number(juryFusion.confidence).toFixed(1)}%</p>
+          )}
+          {juryFusion.majority_opinion && (
+            <p className="mt-3 text-sm leading-relaxed text-slate-300">{juryFusion.majority_opinion}</p>
+          )}
+        </motion.div>
+      )}
+
+      {item.processingTime > 0 && (
+        <p className="text-xs text-slate-500">
+          Processing time: {(item.processingTime / 1000).toFixed(1)}s
+          {reportsPending &&
+            " · Generating professional forensic report… Estimated time: 3–5 seconds"}
+        </p>
+      )}
+
+      {explanation && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-2xl border border-[#1F2937] bg-gradient-to-br from-[#111827]/90 to-[#0B1120]/90 p-6 backdrop-blur-md"
+        >
+          <h4 className="text-sm font-semibold uppercase tracking-wide text-cyan-400">
+            AI Forensic Explanation
+          </h4>
+          <p className="mt-3 text-sm leading-relaxed text-slate-300">{explanation}</p>
+        </motion.div>
+      )}
+
+      {evidenceId && artifactUrl("ela") && (
+        <ForensicViewer
+          title="Interactive Forensic Viewer"
+          originalUrl={getUnifiedArtifactUrl(evidenceId, "ela")}
+          overlayUrl={getUnifiedArtifactUrl(evidenceId, "ela")}
+          overlayLabel="ELA Heatmap"
+        />
+      )}
+
+      {/* Overall Risk Gauge */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: 0.15 }}
+        className="flex flex-col items-center rounded-2xl border border-[#1F2937] bg-gradient-to-br from-[#111827] to-[#0B1120] p-8 shadow-xl"
+      >
+        <RiskGauge score={riskScore} size={220} label="Overall Risk" />
+      </motion.div>
+
+      {/* Module Scores */}
+      <div>
+        <h4 className="mb-4 text-lg font-semibold text-white">Module Scores</h4>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {moduleScores.map((mod, i) => (
+            <ProgressCard
+              key={mod.title}
+              icon={mod.icon}
+              title={mod.title}
+              score={mod.score}
+              delay={i * 0.1}
+            />
+          ))}
+        </div>
+      </div>
+
+      {(analysis.scan_mode === "deep" || spectralFusion.overall_score != null) && (
+        <div>
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <h4 className="text-lg font-semibold text-white">Multi-Spectral Analysis</h4>
+            {spectralFusion.overall_score_pct != null && (
+              <p className="text-sm text-cyan-300">
+                Fusion score: {spectralFusion.overall_score_pct}% · confidence{" "}
+                {Math.round(Number(spectralFusion.confidence || 0) * 100)}%
+              </p>
+            )}
+          </div>
+          {spectralFusion.reasoning && (
+            <p className="mb-4 text-sm leading-relaxed text-slate-400">
+              {spectralFusion.reasoning}
+            </p>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {spectralScores.map((mod, i) => (
+              <ProgressCard
+                key={mod.title}
+                icon={mod.icon}
+                title={mod.title}
+                score={mod.score}
+                delay={i * 0.08}
+                subtitle={mod.explanation}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(analysis.scan_mode === "deep" || analysis.ai_generation) && Object.keys(ganDetection).length > 0 && (
+        <GanDetectionPanel ganDetection={ganDetection} aiGeneration={analysis.ai_generation} />
+      )}
+
+      {analysis.scan_mode === "deep" && Object.keys(faceForensics).length > 0 && (
+        <FaceForensicsPanel faceForensics={faceForensics} evidenceId={evidenceId} />
+      )}
+
+      {Object.keys(metadataForensics).length > 0 && (
+        <MetadataForensicsPanel metadataForensics={metadataForensics} />
+      )}
+
+      {explainability.success !== false && Object.keys(explainability).length > 0 && (
+        <ExplainabilityPanel explainability={explainability} />
+      )}
+
+      {/* Tampering Detection */}
+      {Object.keys(tampering).length > 0 && (
+        <TamperingCard tampering={tampering} />
+      )}
+
+      {/* Copy-Move Details */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+        className="rounded-2xl border border-[#1F2937] bg-[#111827] p-6"
+      >
+        <h4 className="text-lg font-semibold text-white mb-4">
+          Copy-Move Details
+        </h4>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="rounded-xl border border-[#1F2937] bg-[#0B1120] p-4">
+            <p className="text-xs text-slate-500">Detection Status</p>
+            <p
+              className={`mt-2 font-semibold ${
+                signals.copy_move_detected
+                  ? "text-red-400"
+                  : "text-emerald-400"
+              }`}
+            >
+              {signals.copy_move_detected
+                ? "Duplicate Region Detected"
+                : "No Duplicate Detected"}
+            </p>
+          </div>
+          <div className="rounded-xl border border-[#1F2937] bg-[#0B1120] p-4">
+            <p className="text-xs text-slate-500">Matched Points</p>
+            <p className="mt-2 text-2xl font-bold text-white">
+              {signals.matched_points || 0}
+            </p>
+          </div>
+          <div className="rounded-xl border border-[#1F2937] bg-[#0B1120] p-4">
+            <p className="text-xs text-slate-500">RANSAC Inliers</p>
+            <p className="mt-2 text-2xl font-bold text-white">
+              {signals.ransac_inliers || 0}
+            </p>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Forensic Artifacts */}
+      <div>
+        <h4 className="mb-2 text-lg font-semibold text-white">
+          Forensic Visualizations
+        </h4>
+        <p className="mb-6 text-sm text-slate-500">
+          Visual artifacts generated during analysis. Hover to zoom, download, or view fullscreen.
+        </p>
+        <div className="grid gap-6 sm:grid-cols-2">
+          {artifactItems.map((art) => (
+            <ArtifactCard
+              key={art.key}
+              title={art.title}
+              description={art.description}
+              artifactUrl={art.url}
+            />
+          ))}
+        </div>
+      </div>
+    </motion.div>
+  );
 }
 
+/* ========================================= */
+/* Main ImageForensics component             */
+/* ========================================= */
+
+function ImageForensics({ results = [] }) {
+  if (!results || results.length === 0) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="mt-10 rounded-2xl border border-[#1F2937] bg-[#111827]/60 p-12 text-center backdrop-blur-sm"
+      >
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-800">
+          <Scan className="h-6 w-6 text-slate-500" />
+        </div>
+        <h2 className="text-xl font-semibold text-slate-300">
+          Forensic Analysis Report
+        </h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Upload and analyze an image to generate a forensic report.
+        </p>
+      </motion.div>
+    );
+  }
+
+  return (
+    <div className="mt-10 space-y-12">
+      <motion.div
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <h2 className="text-3xl font-bold text-white">
+          Forensic Analysis Report
+        </h2>
+        <p className="mt-2 text-slate-400">
+          AI-powered multimodal forensic investigation results.
+        </p>
+      </motion.div>
+
+      {results.map((item, index) => (
+        <ForensicReport
+          key={item.evidenceId || index}
+          item={item}
+          index={index}
+        />
+      ))}
+    </div>
+  );
+}
 
 export default ImageForensics;

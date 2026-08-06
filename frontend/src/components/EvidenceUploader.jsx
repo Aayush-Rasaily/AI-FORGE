@@ -1,689 +1,249 @@
+import { useState } from "react";
 import {
   uploadEvidence,
   analyzeImage,
-  analyzeDocument
+  analyzeDocument,
+  ApplicationError,
+  ConnectivityError,
+  formatApiError,
 } from "../services/api";
+import { useBackend } from "../context/BackendConnectivity";
 
+import UploadZone from "./ui/UploadZone";
+import AnalysisLoader from "./ui/AnalysisLoader";
 
-function EvidenceUploader({
+async function processFile(file, analysisType, onProgress, forceDeep) {
+  const uploadResult = await uploadEvidence(file);
+  const evidenceId = uploadResult.evidence_id;
 
-  analysisType,
+  if (!evidenceId) {
+    throw new ApplicationError("Backend did not return an evidence ID.", { status: 500 });
+  }
 
-  files,
-  setFiles,
+  const fileType = uploadResult.file_type;
 
-  processing,
-  setProcessing,
-
-  setResults,
-
-  error,
-  setError
-
-}) {
-
-
-  // ==========================================
-  // FILE CONFIGURATION
-  // ==========================================
-
-  const isDocument =
-    analysisType === "document";
-
-
-  const acceptedTypes = isDocument
-
-    ? ".pdf,.doc,.docx"
-
-    : ".jpg,.jpeg,.png,.webp";
-
-
-  const supportedText = isDocument
-
-    ? "Supported: PDF, DOC, DOCX"
-
-    : "Supported: JPG, JPEG, PNG, WEBP";
-
-
-  // ==========================================
-  // FILE SELECTION
-  // ==========================================
-
-  const handleFileChange = (event) => {
-
-    const selectedFiles = Array.from(
-      event.target.files || []
-    );
-
-
-    if (
-      selectedFiles.length === 0
-    ) {
-
-      return;
-
-    }
-
-
-    setFiles(
-      selectedFiles
-    );
-
-
-    setResults(
-      []
-    );
-
-
-    setError(
-      ""
-    );
-
-  };
-
-
-  // ==========================================
-  // ANALYZE EVIDENCE
-  // ==========================================
-
-  const handleAnalyze = async () => {
-
-    if (
-      !files ||
-      files.length === 0
-    ) {
-
-      setError(
-
-        isDocument
-
-          ? "Please select at least one document."
-
-          : "Please select at least one image."
-
-      );
-
-      return;
-
-    }
-
-
-    setProcessing(
-      true
-    );
-
-
-    setError(
-      ""
-    );
-
-
-    setResults(
-      []
-    );
-
-
-    try {
-
-      const analysisResults = [];
-
-
-      // ======================================
-      // PROCESS EACH FILE
-      // ======================================
-
-      for (
-        const file of files
-      ) {
-
-
-        try {
-
-          console.log(
-            `[UPLOAD] Uploading: ${file.name}`
-          );
-
-
-          // ----------------------------------
-          // UPLOAD
-          // ----------------------------------
-
-          const uploadResult =
-            await uploadEvidence(
-              file
-            );
-
-
-          console.log(
-            "[UPLOAD RESULT]",
-            uploadResult
-          );
-
-
-          // ----------------------------------
-          // EVIDENCE ID
-          // ----------------------------------
-
-          const evidenceId =
-            uploadResult.evidence_id;
-
-
-          if (!evidenceId) {
-
-            throw new Error(
-              "Backend did not return an evidence ID."
-            );
-
-          }
-
-
-          // ----------------------------------
-          // FILE TYPE
-          // ----------------------------------
-
-          const fileType =
-            uploadResult.file_type;
-
-
-          console.log(
-            `[ANALYSIS] ${file.name} -> ${fileType}`
-          );
-
-
-          // ==================================
-          // IMAGE FORENSICS
-          // ==================================
-
-          if (
-            analysisType === "image"
-          ) {
-
-
-            if (
-              fileType !== "image"
-            ) {
-
-              throw new Error(
-
-                "Please upload a valid image file for Image Forensics."
-
-              );
-
-            }
-
-
-            console.log(
-
-              `[IMAGE] Starting analysis for ${evidenceId}`
-
-            );
-
-
-            const analysisResult =
-              await analyzeImage(
-                evidenceId
-              );
-              console.log("FULL RESPONSE");
-              console.log(analysisResult);
-
-              console.log("TAMPERING");
-              console.log(analysisResult.tampering);
-
-
-            console.log(
-
-              "[IMAGE ANALYSIS RESULT]",
-
-              analysisResult
-
-            );
-
-
-            analysisResults.push({
-
-              filename:
-                file.name,
-
-              evidenceId:
-                evidenceId,
-
-              fileType:
-                "image",
-
-              status:
-                "completed",
-
-              analysis:
-                analysisResult.analysis,
-
-              tampering:
-                analysisResult.tampering
-
-            });
-
-
-            continue;
-
-          }
-
-
-          // ==================================
-          // DOCUMENT FORENSICS
-          // ==================================
-
-          if (
-            analysisType === "document"
-          ) {
-
-
-            if (
-
-              fileType !== "document" &&
-
-              fileType !== "pdf"
-
-            ) {
-
-              throw new Error(
-
-                "Please upload a PDF, DOC, or DOCX file for Document Forensics."
-
-              );
-
-            }
-
-
-            console.log(
-
-              `[DOCUMENT] Starting analysis for ${evidenceId}`
-
-            );
-
-
-            const documentResult =
-              await analyzeDocument(
-                evidenceId
-              );
-
-
-            console.log(
-
-              "[DOCUMENT ANALYSIS RESULT]",
-
-              documentResult
-
-            );
-
-
-            // --------------------------------
-            // IMPORTANT
-            // Store complete document analysis
-            // --------------------------------
-
-            analysisResults.push({
-
-              filename:
-                file.name,
-
-              evidenceId:
-                evidenceId,
-
-              fileType:
-                "document",
-
-              status:
-                "completed",
-
-              documentAnalysis:
-                documentResult.analysis
-
-            });
-
-
-            continue;
-
-          }
-
-
-          // ==================================
-          // UNKNOWN ANALYSIS TYPE
-          // ==================================
-
-          throw new Error(
-
-            "Unknown analysis type."
-
-          );
-
-
-        } catch (fileError) {
-
-
-          console.error(
-
-            `Analysis failed for ${file.name}:`,
-
-            fileError
-
-          );
-
-
-          analysisResults.push({
-          filename: file.name,
-          evidenceId: evidenceId,
-          fileType: "image",
-          status: "completed",
-
-          analysis: analysisResult.analysis,
-          tampering: analysisResult.tampering
+  if (analysisType === "image") {
+    if (fileType !== "image") {
+      throw new ApplicationError("Please upload a valid image file for Image Forensics.", {
+        status: 400,
       });
-        }
-
-      }
-
-
-      // ======================================
-      // SAVE RESULTS
-      // ======================================
-
-      console.log(
-
-        "[FINAL ANALYSIS RESULTS]",
-
-        analysisResults
-
-      );
-
-
-      setResults(
-
-        analysisResults
-
-      );
-
-
-      // ======================================
-      // CHECK ALL FAILED
-      // ======================================
-
-      const failedResults =
-
-        analysisResults.filter(
-
-          (item) =>
-
-            item.status ===
-
-            "failed"
-
-        );
-
-
-      if (
-
-        failedResults.length > 0 &&
-
-        failedResults.length ===
-
-        analysisResults.length
-
-      ) {
-
-        setError(
-
-          isDocument
-
-            ? "Document analysis failed for all selected files."
-
-            : "Image analysis failed for all selected files."
-
-        );
-
-      }
-
-
-    } catch (error) {
-
-
-      console.error(
-
-        "Evidence analysis error:",
-
-        error
-
-      );
-
-
-      setError(
-
-        error?.message ||
-
-        "Evidence analysis failed."
-
-      );
-
-
-    } finally {
-
-
-      setProcessing(
-
-        false
-
-      );
-
     }
-
-  };
-
-
-  // ==========================================
-  // COMPONENT UI
-  // ==========================================
-
-  return (
-
-    <>
-
-      {/* ================================= */}
-      {/* UPLOAD SECTION */}
-      {/* ================================= */}
-
-      <div className="mt-10 upload-zone rounded-xl p-12 text-center">
-
-
-        <h3 className="text-xl font-semibold text-white">
-
-          {isDocument
-
-            ? "Upload Document Evidence"
-
-            : "Upload Image Evidence"
-
-          }
-
-        </h3>
-
-
-        <p className="mt-3 text-sm text-slate-400">
-
-          {supportedText}
-
-        </p>
-
-
-        <label className="mt-6 inline-block cursor-pointer rounded-lg bg-gradient-to-r from-blue-600 to-cyan-600 px-6 py-3 font-semibold text-white shadow-lg shadow-blue-500/20 transition hover:from-blue-500 hover:to-cyan-500">
-
-
-          {isDocument
-
-            ? "Select Documents"
-
-            : "Select Images"
-
-          }
-
-
-          <input
-
-            type="file"
-
-            multiple
-
-            accept={
-              acceptedTypes
-            }
-
-            onChange={
-              handleFileChange
-            }
-
-            className="hidden"
-
-          />
-
-
-        </label>
-
-
-      </div>
-
-
-      {/* ================================= */}
-      {/* SELECTED FILES */}
-      {/* ================================= */}
-
-      {files &&
-
-        files.length > 0 && (
-
-          <div className="mt-8">
-
-
-            <h3 className="text-xl font-bold">
-
-              Selected Evidence
-
-            </h3>
-
-
-            <div className="mt-4 space-y-3">
-
-
-              {files.map(
-
-                (file, index) => (
-
-                  <div
-
-                    key={`${file.name}-${index}`}
-
-                    className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-slate-800/40 p-4 backdrop-blur-sm"
-
-                  >
-
-
-                    <div>
-
-                      <p className="font-medium">
-
-                        {file.name}
-
-                      </p>
-
-
-                      <p className="text-sm text-slate-400">
-
-                        {(
-
-                          file.size /
-
-                          1024 /
-
-                          1024
-
-                        ).toFixed(2)}
-
-                        {" "}MB
-
-                      </p>
-
-                    </div>
-
-
-                    <span className="text-sm text-green-400">
-
-                      Ready
-
-                    </span>
-
-
-                  </div>
-
-                )
-
-              )}
-
-            </div>
-
-
-            {/* ================================= */}
-            {/* ANALYZE BUTTON */}
-            {/* ================================= */}
-
-            <button
-
-              onClick={
-                handleAnalyze
-              }
-
-              disabled={
-                processing
-              }
-
-              className="mt-8 rounded-lg bg-gradient-to-r from-emerald-600 to-cyan-600 px-8 py-3 font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:from-emerald-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50"
-
-            >
-
-              {processing
-
-                ? "Analyzing Evidence..."
-
-                : isDocument
-
-                  ? "Analyze Document"
-
-                  : "Analyze Images"
-
-              }
-
-            </button>
-
-
-          </div>
-
-        )}
-
-
-      {/* ================================= */}
-      {/* ERROR */}
-      {/* ================================= */}
-
-      {error && (
-
-        <div className="mt-8 rounded-lg border border-red-500/30 bg-red-500/10 p-5 text-red-400">
-
-          {error}
-
-        </div>
-
-      )}
-
-    </>
-
-  );
-
+    const response = await analyzeImage(evidenceId, { onProgress, forceDeep });
+    return {
+      filename: file.name,
+      evidenceId,
+      fileType: "image",
+      status: "completed",
+      analysis: response.analysis ?? {},
+      tampering: response.tampering ?? {},
+      dashboard: response.dashboard ?? {},
+      jury: response.jury ?? {},
+      report: response.report ?? {},
+      artifacts: response.artifacts ?? {},
+      risk: response.risk,
+      confidence: response.confidence,
+      processingTime: response.processing_time,
+      reportsPending: response.reports_pending ?? true,
+      reportStatus: response.report_status ?? "processing",
+      timing: response.timing,
+      cached: response.cached,
+      artifactsPending: false,
+      scanMode: response.scan_mode,
+      warnings: response.warnings ?? [],
+      hashes: uploadResult.hashes,
+      intakeTimestamp: uploadResult.intake_timestamp,
+    };
+  }
+
+  if (analysisType === "document") {
+    if (fileType !== "document" && fileType !== "pdf") {
+      throw new ApplicationError(
+        "Please upload a PDF, DOC, or DOCX file for Document Forensics.",
+        { status: 400 }
+      );
+    }
+    const documentResult = await analyzeDocument(evidenceId, { onProgress });
+    return {
+      filename: file.name,
+      evidenceId,
+      fileType: "document",
+      status: "completed",
+      documentAnalysis: documentResult.analysis ?? documentResult,
+      timing: documentResult.timing,
+      cached: documentResult.cached,
+      hashes: uploadResult.hashes,
+      intakeTimestamp: uploadResult.intake_timestamp,
+      reportsPending: true,
+    };
+  }
+
+  throw new ApplicationError("Unknown analysis type.", { status: 400 });
 }
 
+function EvidenceUploader({
+  analysisType,
+  files,
+  setFiles,
+  processing,
+  setProcessing,
+  setResults,
+  error,
+  setError,
+}) {
+  const { backendOnline } = useBackend();
+  const isDocument = analysisType === "document";
+  const [progressEvents, setProgressEvents] = useState([]);
+  const [forceDeep, setForceDeep] = useState(false);
+
+  const acceptedTypes = isDocument
+    ? ".pdf,.doc,.docx"
+    : ".jpg,.jpeg,.png,.webp";
+
+  const supportedText = isDocument
+    ? "Supported: PDF, DOCX (DOC: convert to PDF first)"
+    : "Supported: JPG, JPEG, PNG, WEBP";
+
+  const handleFilesSelected = (selectedFiles) => {
+    if (!backendOnline) {
+      setError("Backend Offline — health check failed. Reconnect first.");
+      return;
+    }
+    setFiles(selectedFiles);
+    setResults([]);
+    setError("");
+  };
+
+  const handleAnalyze = async () => {
+    if (!backendOnline) {
+      setError("Backend Offline — health check failed. Reconnect first.");
+      return;
+    }
+    if (!files || files.length === 0) {
+      setError(
+        isDocument
+          ? "Please select at least one document."
+          : "Please select at least one image."
+      );
+      return;
+    }
+
+    setProcessing(true);
+    setError("");
+    setResults([]);
+    setProgressEvents([]);
+
+    try {
+      const results = await Promise.allSettled(
+        files.map((file) =>
+          processFile(file, analysisType, (event) => {
+            setProgressEvents((prev) => [...prev, event]);
+          }, forceDeep)
+        )
+      );
+
+      const analysisResults = results.map((result, i) => {
+        if (result.status === "fulfilled") {
+          return result.value;
+        }
+        const reason = result.reason;
+        let message = "Analysis failed";
+        if (reason instanceof ApplicationError) {
+          message = reason.message;
+        } else if (reason instanceof ConnectivityError) {
+          message = "Connectivity Error — retry. Backend Online status is unchanged.";
+        } else {
+          message = formatApiError(reason, "Analysis failed");
+        }
+        return {
+          filename: files[i].name,
+          evidenceId: null,
+          fileType: isDocument ? "document" : "image",
+          status: "failed",
+          error: message,
+          analysis: {},
+          tampering: {},
+        };
+      });
+
+      setResults(analysisResults);
+
+      if (analysisResults.every((r) => r.status === "failed")) {
+        setError(analysisResults[0]?.error || "Analysis failed for all selected files.");
+      }
+    } catch (err) {
+      console.error("Evidence analysis error:", err);
+      setError(formatApiError(err, "Evidence analysis failed."));
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const disabled = processing || !backendOnline;
+
+  return (
+    <>
+      {!backendOnline && (
+        <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          Backend Offline — health check failed. Uploads are paused until reconnect.
+        </div>
+      )}
+
+      <UploadZone
+        accept={acceptedTypes}
+        multiple
+        supportedText={supportedText}
+        title={
+          isDocument ? "Upload Document Evidence" : "Upload Image Evidence"
+        }
+        files={files}
+        onFilesSelected={handleFilesSelected}
+        disabled={disabled}
+        processing={processing}
+      />
+
+      {files.length > 0 && !isDocument && (
+        <label className="mt-4 flex items-center gap-2 text-sm text-slate-400">
+          <input
+            type="checkbox"
+            checked={forceDeep}
+            onChange={(e) => setForceDeep(e.target.checked)}
+            disabled={disabled}
+            className="rounded border-slate-600 bg-slate-800"
+          />
+          Force deep scan (run all forensic modules even if quick scan passes)
+        </label>
+      )}
+
+      {files.length > 0 && (
+        <button
+          onClick={handleAnalyze}
+          disabled={disabled}
+          className="mt-6 w-full rounded-xl bg-gradient-to-r from-emerald-600 to-cyan-600 px-8 py-3.5 font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:from-emerald-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+        >
+          {processing
+            ? "Analyzing..."
+            : !backendOnline
+              ? "Backend Offline"
+              : isDocument
+                ? "Analyze Document"
+                : "Analyze Images"}
+        </button>
+      )}
+
+      <AnalysisLoader
+        active={processing}
+        analysisType={analysisType}
+        fileCount={files.length}
+        progressEvents={progressEvents}
+      />
+
+      {error && (
+        <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+    </>
+  );
+}
 
 export default EvidenceUploader;
