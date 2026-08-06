@@ -7,6 +7,9 @@ from torchvision import transforms
 from backend.models.signature.model import SiameseNetwork
 
 
+from backend.utils.hardware import get_torch_device
+
+
 # ==========================================
 # Configuration
 # ==========================================
@@ -15,12 +18,7 @@ MODEL_PATH = Path(
     "backend/models/signature/weights/siamese_best.pt"
 )
 
-
-DEVICE = torch.device(
-    "cuda"
-    if torch.cuda.is_available()
-    else "cpu"
-)
+DEVICE = torch.device(get_torch_device())
 
 
 # ==========================================

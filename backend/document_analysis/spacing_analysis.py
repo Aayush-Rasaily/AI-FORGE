@@ -21,15 +21,13 @@ def distance(a, b):
 # Analyze Layout Spacing
 # ==========================================
 
-def analyze_spacing(image_path):
-
+def analyze_spacing(image_path, layout_data=None, analysis_dir=None):
     image_path = Path(image_path)
 
     if not image_path.exists():
-
         raise FileNotFoundError(image_path)
 
-    layout = analyze_text_layout(str(image_path))
+    layout = layout_data or analyze_text_layout(str(image_path), analysis_dir=analysis_dir)
 
     lines = layout["lines"]
 

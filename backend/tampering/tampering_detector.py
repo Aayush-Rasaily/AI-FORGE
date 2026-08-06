@@ -256,287 +256,30 @@ def perform_ela(
 def detect_copy_move(
     image_path: str
 ) -> Dict[str, Any]:
-    """
-    Detect possible copy-move manipulation.
-
-    Uses:
-
-        ORB
-        ↓
-        Feature Matching
-        ↓
-        RANSAC Homography
-
-    Returns JSON-safe results.
-    """
-
+    """Delegate to optimized copy-move detector."""
     try:
-
-        image = cv2.imread(
-            str(image_path)
-        )
-
-        if image is None:
-
-            return {
-
-                "available": False,
-
-                "suspicion_score": 0.0,
-
-                "error":
-                    "Unable to read image."
-
-            }
-
-        gray = cv2.cvtColor(
-            image,
-            cv2.COLOR_BGR2GRAY
-        )
-
-        # ORB detector
-        orb = cv2.ORB_create(
-            nfeatures=3000
-        )
-
-        keypoints, descriptors = orb.detectAndCompute(
-            gray,
-            None
-        )
-
-        if descriptors is None:
-
-            return {
-
-                "available": True,
-
-                "keypoints": 0,
-
-                "matches": 0,
-
-                "inliers": 0,
-
-                "suspicion_score": 0.0,
-
-                "message":
-                    "Not enough features for copy-move analysis."
-
-            }
-
-        keypoint_count = len(
-            keypoints
-        )
-
-        if keypoint_count < MIN_ORB_FEATURES:
-
-            return {
-
-                "available": True,
-
-                "keypoints":
-                    keypoint_count,
-
-                "matches": 0,
-
-                "inliers": 0,
-
-                "suspicion_score": 0.0,
-
-                "message":
-                    "Insufficient ORB features."
-
-            }
-
-        # Brute force matcher
-        matcher = cv2.BFMatcher(
-            cv2.NORM_HAMMING,
-            crossCheck=False
-        )
-
-        knn_matches = matcher.knnMatch(
-            descriptors,
-            descriptors,
-            k=2
-        )
-
-        good_matches = []
-
-        for pair in knn_matches:
-
-            if len(pair) < 2:
-
-                continue
-
-            m, n = pair
-
-            # Lowe ratio test
-            if m.distance < 0.70 * n.distance:
-
-                # Remove self-match
-                if m.queryIdx != m.trainIdx:
-
-                    good_matches.append(
-                        m
-                    )
-
-        match_count = len(
-            good_matches
-        )
-
-        if match_count < MIN_MATCHES:
-
-            return {
-
-                "available": True,
-
-                "keypoints":
-                    keypoint_count,
-
-                "matches":
-                    match_count,
-
-                "inliers": 0,
-
-                "suspicion_score": 0.0,
-
-                "copy_move_detected": False,
-
-                "message":
-                    "No strong copy-move pattern detected."
-
-            }
-
-        # Extract matched coordinates
-        src_points = np.float32(
-            [
-                keypoints[m.queryIdx].pt
-                for m in good_matches
-            ]
-        ).reshape(
-            -1,
-            1,
-            2
-        )
-
-        dst_points = np.float32(
-            [
-                keypoints[m.trainIdx].pt
-                for m in good_matches
-            ]
-        ).reshape(
-            -1,
-            1,
-            2
-        )
-
-        # RANSAC
-        homography, mask = cv2.findHomography(
-            src_points,
-            dst_points,
-            cv2.RANSAC,
-            RANSAC_REPROJ_THRESHOLD
-        )
-
-        if mask is None:
-
-            return {
-
-                "available": True,
-
-                "keypoints":
-                    keypoint_count,
-
-                "matches":
-                    match_count,
-
-                "inliers": 0,
-
-                "suspicion_score": 0.0,
-
-                "copy_move_detected": False
-
-            }
-
-        inliers = int(
-            np.sum(mask)
-        )
-
-        inlier_ratio = float(
-            inliers / max(
-                match_count,
-                1
-            )
-        )
-
-        # Suspicion score
-        if inliers >= 15:
-            suspicion_score = 0.95
-
-        elif inliers >= 10:
-            suspicion_score = 0.75
-
-        elif inliers >= 6:
-            suspicion_score = 0.55
-
-        elif inliers >= 3:
-            suspicion_score = 0.35
-
-        else:
-            suspicion_score = 0.10
-
-        copy_move_detected = (
-            suspicion_score >= 0.60
-        )
-
-        return {
-
+        from backend.analysis.copy_move import detect_copy_move as _detect
+
+        result = _detect(image_path)
+        score = float(result.get("copy_move_score", 0.0))
+        detected = bool(result.get("copy_move_detected", False))
+        if detected:
+            score = max(score, 0.75)
+
+        return make_json_safe({
             "available": True,
-
-            "keypoints":
-                keypoint_count,
-
-            "matches":
-                match_count,
-
-            "inliers":
-                inliers,
-
-            "inlier_ratio":
-                round(
-                    inlier_ratio,
-                    4
-                ),
-
-            "copy_move_detected":
-                copy_move_detected,
-
-            "suspicion_score":
-                round(
-                    suspicion_score,
-                    4
-                ),
-
-            "message":
-                (
-                    "Potential copy-move manipulation detected."
-                    if copy_move_detected
-                    else
-                    "No strong copy-move manipulation detected."
-                )
-
-        }
-
+            "suspicion_score": score,
+            "copy_move_detected": detected,
+            "matches": result.get("matched_points", 0),
+            "inliers": result.get("inliers", 0),
+            "keypoints": result.get("matched_points", 0),
+            "message": result.get("verdict", ""),
+        })
     except Exception as exc:
-
         return {
-
             "available": False,
-
             "suspicion_score": 0.0,
-
-            "error":
-                str(exc)
-
+            "error": str(exc),
         }
 
 
@@ -851,263 +594,99 @@ def analyze_tampering(
 
         }
 
-    # --------------------------------------------------------
-    # Run individual forensic modules
-    # --------------------------------------------------------
+    from backend.analysis.parallel_runner import run_parallel_modules
+    from backend.analysis.wavelet_analysis import analyze_wavelet
+    from backend.fusion.hybrid_fusion import fuse_hybrid_tampering
+    from backend.models.tampering_classifier import predict_tampering_score
+    from backend.utils.timing import ModuleTimer
+    import tempfile
 
-    ela_result = perform_ela(
-        image_path
-    )
+    timer = ModuleTimer("Tampering Analysis")
 
-    copy_move_result = detect_copy_move(
-        image_path
-    )
+    def _wavelet_signal():
+        with tempfile.TemporaryDirectory() as tmp:
+            out = str(Path(tmp) / "wavelet.jpg")
+            result = analyze_wavelet(image_path, out)
+            return {"suspicion_score": result.get("wavelet_score", 0.0), "available": True}
 
-    edge_result = analyze_edge_inconsistency(
-        image_path
-    )
+    def _cnn_signal():
+        result = predict_tampering_score(image_path)
+        return {"suspicion_score": result.get("score", 0.0), "available": True, **result}
 
-    metadata_result = analyze_metadata(
-        image_path
-    )
-
-    # --------------------------------------------------------
-    # Collect scores
-    # --------------------------------------------------------
-
-    ela_score = float(
-        ela_result.get(
-            "suspicion_score",
-            0.0
+    with timer.track("parallel_modules"):
+        parallel = run_parallel_modules(
+            {
+                "ela": lambda: perform_ela(image_path),
+                "copy_move": lambda: detect_copy_move(image_path),
+                "edge": lambda: analyze_edge_inconsistency(image_path),
+                "metadata": lambda: analyze_metadata(image_path),
+                "wavelet": _wavelet_signal,
+                "cnn": _cnn_signal,
+            },
+            max_workers=6,
+            timer=timer,
         )
-    )
 
-    copy_move_score = float(
-        copy_move_result.get(
-            "suspicion_score",
-            0.0
-        )
-    )
+    ela_result = parallel.get("ela") or {}
+    copy_move_result = parallel.get("copy_move") or {}
+    edge_result = parallel.get("edge") or {}
+    metadata_result = parallel.get("metadata") or {}
+    wavelet_result = parallel.get("wavelet") or {}
+    cnn_result = parallel.get("cnn") or {}
 
-    edge_score = float(
-        edge_result.get(
-            "suspicion_score",
-            0.0
-        )
-    )
+    fusion = fuse_hybrid_tampering({
+        "cnn": float(cnn_result.get("suspicion_score", 0.0)),
+        "ela": float(ela_result.get("suspicion_score", 0.0)),
+        "copy_move": float(copy_move_result.get("suspicion_score", 0.0)),
+        "wavelet": float(wavelet_result.get("suspicion_score", 0.0)),
+        "edge": float(edge_result.get("suspicion_score", 0.0)),
+        "metadata": float(metadata_result.get("suspicion_score", 0.0)),
+    })
 
-    metadata_score = float(
-        metadata_result.get(
-            "suspicion_score",
-            0.0
-        )
-    )
-
-    # --------------------------------------------------------
-    # Weighted forensic score
-    #
-    # Copy-move gets highest weight because it is a
-    # more direct manipulation signal.
-    # --------------------------------------------------------
-
-    weighted_score = (
-        0.40 * ela_score +
-        0.25 * copy_move_score +
-        0.25 * edge_score +
-        0.10 * metadata_score
-    )
-
-    strongest_signal = max(
-        ela_score,
-        copy_move_score,
-        edge_score
-    )
-
-    tampering_score = (
-        weighted_score * 0.7 +
-        strongest_signal * 0.3
-    )
-
-
-    tampering_score = max(
-        0.0,
-        min(
-            1.0,
-            tampering_score
-        )
-    )
-
-    # --------------------------------------------------------
-    # Determine risk
-    # --------------------------------------------------------
-
-    if tampering_score >= 0.70:
-    
-        verdict = "HIGHLY_SUSPICIOUS"
-        severity = "CRITICAL"
-
-    elif tampering_score >= 0.50:
-
-        verdict = "SUSPICIOUS"
-        severity = "HIGH"
-
-    elif tampering_score >= 0.25:
-
-        verdict = "POTENTIALLY_MANIPULATED"
-        severity = "MEDIUM"
-
-    else:
-
-        verdict = "NO_STRONG_TAMPERING_SIGNAL"
-        severity = "LOW"
-    # --------------------------------------------------------
-    # Generate forensic signals
-    # --------------------------------------------------------
+    tampering_score = fusion["tampering_score"]
+    verdict = fusion["verdict"]
+    severity = fusion["severity"]
+    confidence = fusion["confidence"] / 100.0
 
     signals: List[str] = []
-
-    if ela_score >= 0.50:
-
-        signals.append(
-            "ELA detected significant compression inconsistencies."
-        )
-
-    if copy_move_result.get(
-        "copy_move_detected",
-        False
-    ):
-
-        signals.append(
-            "Potential copy-move manipulation detected."
-        )
-
-    if edge_score >= 0.50:
-
-        signals.append(
-            "Unusual local edge or texture inconsistencies detected."
-        )
-
-    if metadata_result.get(
-        "suspicious_software"
-    ):
-
-        signals.append(
-            "Image metadata contains possible editing software indicators."
-        )
-
+    if ela_result.get("suspicion_score", 0) >= 0.50:
+        signals.append("ELA detected significant compression inconsistencies.")
+    if copy_move_result.get("copy_move_detected", False):
+        signals.append("Potential copy-move manipulation detected.")
+    if edge_result.get("suspicion_score", 0) >= 0.50:
+        signals.append("Unusual local edge or texture inconsistencies detected.")
+    if metadata_result.get("suspicious_software"):
+        signals.append("Image metadata contains possible editing software indicators.")
+    if cnn_result.get("score", 0) >= 0.45:
+        signals.append(f"CNN tampering classifier flagged anomaly ({cnn_result.get('method', 'cnn')}).")
     if not signals:
+        signals.append("No strong independent tampering indicators detected.")
 
-        signals.append(
-            "No strong independent tampering indicators detected."
-        )
-
-    # --------------------------------------------------------
-    # Confidence
-    #
-    # This measures how much forensic evidence was available,
-    # not whether the image is definitely fake.
-    # --------------------------------------------------------
-
-    available_modules = sum(
-        [
-            bool(
-                ela_result.get(
-                    "available",
-                    False
-                )
-            ),
-
-            bool(
-                copy_move_result.get(
-                    "available",
-                    False
-                )
-            ),
-
-            bool(
-                edge_result.get(
-                    "available",
-                    False
-                )
-            ),
-
-            bool(
-                metadata_result.get(
-                    "available",
-                    False
-                )
-            )
-
-        ]
-    )
-
-    confidence = (
-        available_modules
-        / 4.0
-    )
-
-    # --------------------------------------------------------
-    # Final result
-    # --------------------------------------------------------
+    timing = timer.log_summary()
 
     result = {
-
         "success": True,
-
-        "module":
-            "tampering_detection",
-
-        "image_path":
-            image_path,
-
-        "verdict":
-            verdict,
-
-        "severity":
-            severity,
-
-        "tampering_score":
-            round(
-                tampering_score,
-                4
-            ),
-
-        "tampering_percentage":
-            round(
-                tampering_score * 100,
-                2
-            ),
-
-        "confidence":
-            round(
-                confidence,
-                4
-            ),
-
-        "signals":
-            signals,
-
+        "module": "tampering_detection",
+        "image_path": image_path,
+        "verdict": verdict,
+        "severity": severity,
+        "tampering_score": tampering_score,
+        "tampering_percentage": fusion["tampering_percentage"],
+        "confidence": confidence,
+        "signals": signals,
+        "fusion": fusion,
+        "timing": timing,
         "analysis": {
-
-            "ela":
-                ela_result,
-
-            "copy_move":
-                copy_move_result,
-
-            "edge_inconsistency":
-                edge_result,
-
-            "metadata":
-                metadata_result
-
-        }
-
+            "ela": ela_result,
+            "copy_move": copy_move_result,
+            "edge_inconsistency": edge_result,
+            "metadata": metadata_result,
+            "wavelet": wavelet_result,
+            "cnn": cnn_result,
+        },
     }
 
-    return make_json_safe(
-        result
-    )
+    return make_json_safe(result)
 
 
 # ============================================================

@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import tempfile
 import uuid
 from pathlib import Path
@@ -7,26 +9,29 @@ from fastapi import (
     UploadFile,
     File,
     HTTPException,
+    Query,
+    Request,
 )
 
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.encoders import jsonable_encoder
 
-from backend.core.evidence_manager import (
-    generate_evidence_id,
-)
+from backend.core.evidence_manager import generate_evidence_id
+from backend.forensics.integration import on_evidence_uploaded
+from backend.forensics.user_context import get_investigator
 
 from backend.ingestion.file_router import (
     identify_file_type,
 )
 
-from backend.analysis.unified_image_analysis import (
-    analyze_image_unified,
-)
-
 from backend.analysis.document_forensics import (
     analyze_document,
 )
+
+from backend.services.image_analysis_service import run_image_analysis
+from backend.services.document_analysis_service import run_document_analysis
+from backend.utils.artifact_paths import resolve_artifact_path, artifact_api_urls
+from backend.services.artifact_service import generate_artifact, get_artifact_status
 
 from backend.models.signature.inference import (
     verify_signature,
@@ -40,7 +45,21 @@ from backend.document_analysis.evidence_fusion import (
     make_json_serializable,
 )
 
-from backend.tampering.tampering_detector import analyze_tampering
+from backend.utils.cache import AnalysisCache
+from backend.utils.errors import (
+    DocumentAnalysisError,
+    ForensicAnalysisError,
+    structured_error,
+)
+from backend.pipeline.completion import build_standard_response
+from backend.pipeline.validator import PipelineValidationError
+from backend.database import init_db, get_analysis_by_evidence_id
+from backend.utils.progress import ProgressBus
+
+logger = logging.getLogger("ai_forge.api")
+
+# Initialize database on module load
+init_db()
 # ============================================================
 # SAFE JSON RESPONSE
 # ============================================================
@@ -108,13 +127,31 @@ MAX_FILE_SIZE = (
 # HELPER FUNCTIONS
 # ============================================================
 
+@router.get("/evidence/recent")
+async def list_recent_evidence_endpoint(limit: int = Query(50, ge=1, le=200)):
+    """Shared evidence list for Dashboard / Investigation / Timeline / Reports."""
+    from backend.forensics.repository import list_recent_evidence
+
+    items = list_recent_evidence(limit)
+    return safe_json_response({
+        "success": True,
+        "evidence": items,
+        "count": len(items),
+    })
+
+
 def find_evidence_file(
     evidence_id: str,
 ):
     """
-    Find the uploaded evidence file
-    using its generated evidence ID.
+    Find the uploaded evidence file using its generated evidence ID.
+    Prefers working copy, then original vault, then legacy upload path.
     """
+    from backend.evidence.paths import find_evidence_file as vault_find
+
+    path = vault_find(evidence_id)
+    if path and path.is_file():
+        return path
 
     files = list(
         UPLOAD_DIR.glob(
@@ -122,7 +159,6 @@ def find_evidence_file(
         )
     )
 
-    # Ignore files inside analysis directory
     files = [
         file
         for file in files
@@ -161,6 +197,19 @@ def get_analysis_dir(
     return analysis_dir
 
 
+def _error_response(exc: Exception, module: str, status_code: int = 500):
+    """Return structured JSON error without crashing the server."""
+    logger.exception("%s failed: %s", module, exc)
+    payload = structured_error(
+        error=str(exc),
+        module=module,
+        details=str(exc),
+        include_traceback=True,
+        exc=exc,
+    )
+    return JSONResponse(status_code=status_code, content=payload)
+
+
 # ============================================================
 # 1. UPLOAD EVIDENCE
 # ============================================================
@@ -169,7 +218,9 @@ def get_analysis_dir(
     "/evidence/upload"
 )
 async def upload_evidence(
+    request: Request,
     file: UploadFile = File(...),
+    investigation_id: str | None = Query(None, description="Link evidence to investigation"),
 ):
 
     # -----------------------------------------
@@ -303,6 +354,33 @@ async def upload_evidence(
         )
 
     # -----------------------------------------
+    # Forensic intake — SHA-256 + SHA-512 + custody
+    # -----------------------------------------
+
+    investigator = get_investigator(request)
+    forensic = on_evidence_uploaded(
+        evidence_id,
+        file_path,
+        original_filename=file.filename,
+        media_type=file_type,
+        investigator=investigator,
+        investigation_id=investigation_id,
+    )
+
+    # Archive to evidence vault (original read-only + working copy + metadata.json)
+    try:
+        from backend.evidence.storage import archive_upload
+
+        archive_upload(
+            evidence_id,
+            file_path,
+            original_filename=file.filename,
+            media_type=file_type,
+        )
+    except Exception as exc:
+        logger.warning("Evidence vault archive failed for %s: %s", evidence_id, exc)
+
+    # -----------------------------------------
     # Return upload result
     # -----------------------------------------
 
@@ -314,6 +392,9 @@ async def upload_evidence(
             "file_type": file_type,
             "file_size": total_size,
             "stored_filename": saved_filename,
+            "hashes": forensic.get("hashes"),
+            "investigation_id": investigation_id,
+            "intake_timestamp": forensic.get("evidence", {}).get("intake_timestamp"),
             "message": (
                 "Evidence uploaded successfully"
             ),
@@ -330,6 +411,7 @@ async def upload_evidence(
 )
 async def analyze_uploaded_image(
     evidence_id: str,
+    force_deep: bool = Query(False, description="Force full deep forensic scan"),
 ):
 
     # -----------------------------------------
@@ -348,71 +430,46 @@ async def analyze_uploaded_image(
         evidence_id
     )
 
-    # -----------------------------------------
-    # Run unified analysis
-    # -----------------------------------------
+    progress = ProgressBus.create(evidence_id)
+    progress.emit("pipeline", "running")
 
     try:
 
-        result = analyze_image_unified(
+        result, tampering_result, timing, from_cache, completion = await asyncio.to_thread(
+            run_image_analysis,
             image_path,
             analysis_dir,
-        )
-        tampering_result = analyze_tampering(
-            str(image_path)
+            evidence_id,
+            True,
+            progress,
+            force_deep,
+            False,
         )
 
-        # IMPORTANT:
-        # Sanitize result before returning
-        print("\n========== RESPONSE SENT TO FRONTEND ==========")
-        print({
-            "success": True,
-            "evidence_id": evidence_id,
-            "analysis": result,
-            "tampering": tampering_result,
-        })
-        print("===============================================\n")
+        return safe_json_response(build_standard_response(
+            evidence_id,
+            result,
+            tampering_result,
+            completion,
+            timing=timing,
+            cached=from_cache,
+            scan_mode=result.get("scan_mode", "deep"),
+        ))
 
-        return {
-            "success": True,
-            "evidence_id": evidence_id,
-            "analysis": result,
-            "tampering": tampering_result,
-        }
+    except PipelineValidationError as e:
+        progress.fail(str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     except HTTPException:
-
         raise
 
+    except ForensicAnalysisError as e:
+        progress.fail(str(e))
+        return _error_response(e, e.module, e.status_code)
+
     except Exception as e:
-
-        print(
-            "\n========== IMAGE ANALYSIS ERROR =========="
-        )
-
-        print(
-            "Evidence ID:",
-            evidence_id,
-        )
-
-        print(
-            "Image:",
-            image_path,
-        )
-
-        print(
-            "Error:",
-            repr(e),
-        )
-
-        print(
-            "===========================================\n"
-        )
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
-        )
+        progress.fail(str(e))
+        return _error_response(e, "image_analysis")
 
 
 # ============================================================
@@ -424,65 +481,111 @@ async def analyze_uploaded_image(
 )
 async def analyze_evidence(
     evidence_id: str,
+    force_deep: bool = Query(False, description="Force full deep forensic scan"),
 ):
 
-    # -----------------------------------------
-    # Find uploaded evidence
-    # -----------------------------------------
-
-    image_path = find_evidence_file(
-        evidence_id
-    )
-
-
-    # -----------------------------------------
-    # Analysis directory
-    # -----------------------------------------
-
-    analysis_dir = get_analysis_dir(
-        evidence_id
-    )
-
-    # -----------------------------------------
-    # Run unified analysis
-    # -----------------------------------------
+    image_path = find_evidence_file(evidence_id)
+    analysis_dir = get_analysis_dir(evidence_id)
+    progress = ProgressBus.create(evidence_id)
+    progress.emit("pipeline", "running")
 
     try:
 
-        result = analyze_image_unified(
+        result, tampering_result, timing, from_cache, completion = await asyncio.to_thread(
+            run_image_analysis,
             image_path,
             analysis_dir,
+            evidence_id,
+            True,
+            progress,
+            force_deep,
+            False,
         )
-        tampering_result = analyze_tampering(
-        str(image_path)
-)
 
-        # IMPORTANT:
-        # Sanitize before returning
-        return safe_json_response(
-            {
-                "success": True,
-                "evidence_id": evidence_id,
-                "analysis": result,
-                "tampering": tampering_result,
-            }
-        )
+        return safe_json_response(build_standard_response(
+            evidence_id,
+            result,
+            tampering_result,
+            completion,
+            timing=timing,
+            cached=from_cache,
+            scan_mode=result.get("scan_mode", "deep"),
+        ))
+
+    except PipelineValidationError as e:
+        progress.fail(str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     except HTTPException:
-
         raise
 
+    except ForensicAnalysisError as e:
+        progress.fail(str(e))
+        return _error_response(e, e.module, e.status_code)
+
     except Exception as e:
+        progress.fail(str(e))
+        return _error_response(e, "unified_analysis")
 
-        print(
-            "Unified image analysis failed:",
-            repr(e),
-        )
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
+@router.get("/evidence/artifacts-status/{evidence_id}")
+async def get_artifacts_status(evidence_id: str):
+    """Check background artifact generation status."""
+    analysis_dir = get_analysis_dir(evidence_id)
+    status = get_artifact_status(analysis_dir)
+    return safe_json_response({"success": True, "evidence_id": evidence_id, **status})
+
+
+@router.get("/evidence/report/{evidence_id}")
+async def get_stored_report(evidence_id: str):
+    """Instantly reopen a stored analysis report from the database."""
+    record = get_analysis_by_evidence_id(evidence_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Report not found.")
+    return safe_json_response({"success": True, "evidence_id": evidence_id, **record})
+
+
+@router.get("/evidence/report/{evidence_id}/download")
+async def download_evidence_report(
+    evidence_id: str,
+    format: str = Query("pdf", description="pdf | docx | json | html"),
+    template: str = Query("full"),
+):
+    """Backward-compatible report download — serves pre-generated report.pdf when available."""
+    analysis_dir = get_analysis_dir(evidence_id)
+    canonical = analysis_dir / "report.pdf"
+    if format == "pdf" and template in ("full", "executive") and canonical.exists():
+        return FileResponse(path=str(canonical), filename=f"{evidence_id}_report.pdf", media_type="application/pdf")
+
+    from backend.reports.exporter import FORMATS, TEMPLATES, export_report
+
+    if format not in FORMATS:
+        raise HTTPException(status_code=400, detail=f"Format must be one of: {FORMATS}")
+    if template not in TEMPLATES:
+        raise HTTPException(status_code=400, detail=f"Template must be one of: {TEMPLATES}")
+
+    try:
+        result = export_report(evidence_id, format=format, template=template)
+        file_path = Path(result["file_path"])
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Report unavailable")
+
+        media_types = {
+            "pdf": "application/pdf",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "json": "application/json",
+            "html": "text/html",
+        }
+        return FileResponse(
+            path=str(file_path),
+            filename=result["filename"],
+            media_type=media_types.get(format, "application/octet-stream"),
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Report download failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Unable to generate report") from exc
 
 
 # ============================================================
@@ -520,92 +623,50 @@ async def get_evidence_artifact(
     # -----------------------------------------
 
     artifact_map = {
-
-        "ela":
-            analysis_dir
-            / f"{image_path.stem}_ela.jpg",
-
-        "edges":
-            analysis_dir
-            / f"{image_path.stem}_edges.jpg",
-
-        "wavelet":
-            analysis_dir
-            / f"{image_path.stem}_wavelet.jpg",
-
-        "copy_move":
-            analysis_dir
-            / f"{image_path.stem}_copy_move.jpg",
+        "ela": resolve_artifact_path(analysis_dir, "ela", image_path.stem),
+        "edges": resolve_artifact_path(analysis_dir, "edges", image_path.stem),
+        "wavelet": resolve_artifact_path(analysis_dir, "wavelet", image_path.stem),
+        "copy_move": resolve_artifact_path(analysis_dir, "copy_move", image_path.stem),
     }
 
-    # -----------------------------------------
-    # Validate artifact type
-    # -----------------------------------------
-
     if artifact_type not in artifact_map:
-
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Invalid artifact type. "
-                "Use ela, edges, wavelet, "
-                "or copy_move."
-            ),
+            detail="Invalid artifact type. Use ela, edges, wavelet, or copy_move.",
         )
 
-    artifact_path = artifact_map[
-        artifact_type
-    ]
-
-    # -----------------------------------------
-    # Generate Copy-Move if missing
-    # -----------------------------------------
-
-    if (
-        artifact_type == "copy_move"
-        and not artifact_path.exists()
-    ):
-
-        try:
-
-            detect_copy_move(
-                str(image_path),
-                output_dir=analysis_dir,
-            )
-
-        except Exception as e:
-
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Copy-move artifact "
-                    "generation failed: "
-                    f"{str(e)}"
-                ),
-            )
-
-    # -----------------------------------------
-    # Check artifact
-    # -----------------------------------------
+    artifact_path = artifact_map[artifact_type]
 
     if not artifact_path.exists():
+        from backend.services.image_analysis_service import _extract_tampering
+        from backend.utils.cache import AnalysisCache
 
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Artifact not found: "
-                f"{artifact_path}"
-            ),
+        cache = AnalysisCache(evidence_id, analysis_dir)
+        cached = cache.load() or {}
+        tampering = cached.get("tampering") or _extract_tampering(cached.get("analysis") or {})
+
+        try:
+            generated = generate_artifact(
+                evidence_id, image_path, analysis_dir, artifact_type, tampering,
+            )
+            if generated and Path(generated).exists():
+                artifact_path = Path(generated)
+        except Exception as exc:
+            logger.warning("On-demand artifact generation failed: %s", exc)
+
+    if not artifact_path.exists():
+        from backend.utils.artifact_visualization import create_placeholder
+        from backend.utils.artifact_paths import artifact_path as canonical_path
+        placeholder = canonical_path(analysis_dir, artifact_type)
+        create_placeholder(
+            placeholder,
+            artifact_type.upper().replace("_", " "),
+            "Generating forensic visualization… please refresh.",
         )
+        artifact_path = placeholder
 
-    # -----------------------------------------
-    # Return artifact
-    # -----------------------------------------
-
-    return FileResponse(
-        path=str(artifact_path),
-        media_type="image/jpeg",
-    )
+    media = "image/png" if artifact_path.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(path=str(artifact_path), media_type=media)
 
 
 # ============================================================
@@ -620,134 +681,55 @@ async def analyze_uploaded_document(
     evidence_id: str,
 ):
 
-    # -----------------------------------------
-    # Find PDF
-    # -----------------------------------------
-
-    document_files = list(
-        UPLOAD_DIR.glob(
-            f"{evidence_id}.pdf"
-        )
-    )
-
-    if not document_files:
-
-        raise HTTPException(
-            status_code=404,
-            detail="PDF document not found",
-        )
-
-    document_path = (
-        document_files[0]
-    )
-
-    print(
-        "\n=========================================="
-    )
-
-    print(
-        "DOCUMENT ANALYSIS"
-    )
-
-    print(
-        "Evidence ID:",
-        evidence_id,
-    )
-
-    print(
-        "Document:",
-        document_path,
-    )
-
-    print(
-        "==========================================\n"
-    )
-
     try:
+        document_path = find_evidence_file(evidence_id)
+        analysis_dir = get_analysis_dir(evidence_id)
+        progress = ProgressBus.create(evidence_id)
+        progress.emit("pipeline", "running")
 
-        # -----------------------------------------
-        # Run document forensic analysis
-        # -----------------------------------------
-
-        result = analyze_document(
-            str(document_path)
+        result, timing, from_cache = await asyncio.to_thread(
+            run_document_analysis,
+            document_path,
+            analysis_dir,
+            evidence_id,
+            True,
+            progress,
         )
 
-        print(
-            "Document analysis completed."
-        )
+        try:
+            from backend.pipeline.report_manager import persist_analysis_payload, generate_reports
 
-        # -----------------------------------------
-        # CRITICAL FIX
-        #
-        # Convert EVERYTHING recursively before
-        # returning to FastAPI.
-        #
-        # This handles:
-        #
-        # numpy.int32
-        # numpy.int64
-        # numpy.float32
-        # numpy.ndarray
-        # torch.Tensor
-        # dataclasses
-        # nested dictionaries
-        # nested lists
-        # -----------------------------------------
+            persist_analysis_payload(evidence_id, result if isinstance(result, dict) else {"result": result}, kind="document")
+            generate_reports(evidence_id, background=True)
+            logger.info("document_report_queued | evidence_id=%s", evidence_id)
+        except Exception as report_exc:
+            logger.warning("document_report_queue_failed | evidence_id=%s | error=%s", evidence_id, report_exc)
 
-        response_data = {
+        return safe_json_response({
             "success": True,
             "evidence_id": evidence_id,
+            "job_id": evidence_id,
+            "reports_pending": True,
+            "report_status": "queued",
             "analysis": result,
-        }
-
-        cleaned_response = (
-            make_json_serializable(
-                response_data
-            )
-        )
-
-        # -----------------------------------------
-        # Final FastAPI JSON encoding
-        # -----------------------------------------
-
-        return jsonable_encoder(
-            cleaned_response
-        )
+            "timing": timing,
+            "cached": from_cache,
+        })
 
     except HTTPException:
-
         raise
 
+    except DocumentAnalysisError as e:
+        progress = ProgressBus.get(evidence_id)
+        if progress:
+            progress.fail(str(e))
+        return _error_response(e, e.module, e.status_code)
+
+    except FileNotFoundError as e:
+        return _error_response(e, "document_analysis", 404)
+
     except Exception as e:
-
-        print(
-            "\n========== DOCUMENT ANALYSIS ERROR =========="
-        )
-
-        print(
-            "Evidence ID:",
-            evidence_id,
-        )
-
-        print(
-            "Document:",
-            document_path,
-        )
-
-        print(
-            "Error:",
-            repr(e),
-        )
-
-        print(
-            "=============================================\n"
-        )
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
-        )
+        return _error_response(e, "document_analysis")
 
 
 # ============================================================
@@ -854,14 +836,39 @@ async def verify_signature_endpoint(
                 str(query_path),
             )
 
-            # -----------------------------------------
-            # Return sanitized result
-            # -----------------------------------------
+            evidence_id = None
+            try:
+                import shutil
+                from backend.core.evidence_manager import generate_evidence_id
+                from backend.forensics.integration import on_evidence_uploaded
+                from backend.pipeline.report_manager import persist_analysis_payload, generate_reports
+
+                evidence_id = generate_evidence_id()
+                dest = UPLOAD_DIR / f"{evidence_id}{query_ext}"
+                shutil.copy2(query_path, dest)
+                on_evidence_uploaded(
+                    evidence_id,
+                    dest,
+                    original_filename=query.filename,
+                    media_type="signature",
+                )
+                persist_analysis_payload(
+                    evidence_id,
+                    result if isinstance(result, dict) else {"result": result},
+                    kind="signature",
+                )
+                generate_reports(evidence_id, background=True)
+            except Exception as report_exc:
+                logger.warning("signature_report_queue_failed | error=%s", report_exc)
 
             return safe_json_response(
                 {
                     "success": True,
+                    "evidence_id": evidence_id,
                     "analysis": result,
+                    "result": result,
+                    "reports_pending": True,
+                    "report_status": "queued",
                 }
             )
 

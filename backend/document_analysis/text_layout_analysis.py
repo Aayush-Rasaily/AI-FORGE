@@ -1,16 +1,10 @@
 from pathlib import Path
+from typing import Any, Dict, Optional
+
 import cv2
 import numpy as np
-import easyocr
 
-# ==========================================
-# Load OCR Reader (Singleton)
-# ==========================================
-
-reader = easyocr.Reader(
-    ["en"],
-    gpu=False
-)
+from backend.services.ocr_service import extract_text, get_layout_cache, save_layout_cache
 
 
 # ==========================================
@@ -206,37 +200,27 @@ def detect_alignment(lines):
 # Main Function
 # ==========================================
 
-def analyze_text_layout(image_path):
-
+def analyze_text_layout(image_path, analysis_dir: Optional[str] = None, layout_data: Optional[Dict] = None):
     image_path = Path(image_path)
 
+    if layout_data is not None:
+        return layout_data
+
+    cached = get_layout_cache(str(image_path), analysis_dir)
+    if cached:
+        return cached
+
     if not image_path.exists():
+        raise FileNotFoundError(image_path)
 
-        raise FileNotFoundError(
-
-            image_path
-
-        )
-
-    image = cv2.imread(
-
-        str(image_path)
-
-    )
-
+    image = cv2.imread(str(image_path))
     if image is None:
+        raise ValueError("Cannot read image")
 
-        raise ValueError(
-
-            "Cannot read image"
-
-        )
-
-    results = reader.readtext(
-
-        str(image_path)
-
-    )
+    ocr_result = extract_text(str(image_path), analysis_dir=analysis_dir)
+    results = []
+    for det in ocr_result.get("detections", []):
+        results.append((det["bbox"], det["text"], det["confidence"]))
 
     words = []
 
@@ -342,4 +326,5 @@ def analyze_text_layout(image_path):
 
     print("=================================\n")
 
+    save_layout_cache(str(image_path), result, analysis_dir)
     return result

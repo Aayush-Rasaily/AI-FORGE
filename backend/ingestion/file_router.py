@@ -20,7 +20,9 @@ def identify_file_type(filename: str):
 
     # Document files
     if extension in [
-        ".pdf"
+        ".pdf",
+        ".doc",
+        ".docx",
     ]:
         return "document"
 

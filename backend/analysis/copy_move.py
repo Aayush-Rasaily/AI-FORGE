@@ -3,763 +3,150 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from backend.utils.safe_image_io import atomic_cv2_write, safe_image_copy
 
-def detect_copy_move(
-    image_path,
-    output_dir=None
-):
+
+def detect_copy_move(image_path, output_dir=None):
     """
-    Detect possible copy-move forgery using ORB
-    feature matching with spatial separation.
+    Detect possible copy-move forgery using ORB feature matching.
 
-    The detector looks for similar local features
-    appearing at different spatial locations in
-    the same image.
-
-    Returns:
-        dict containing:
-        - verdict
-        - copy_move_detected
-        - copy_move_score
-        - matched_points
-        - inliers
-        - spatial_matches
-        - artifact
+    Never reads the original upload directly — uses a temp copy to avoid
+    WinError 32 file-lock conflicts on Windows.
     """
-
-    # ==========================================
-    # READ IMAGE
-    # ==========================================
-
-    image = cv2.imread(
-        str(image_path)
-    )
-
-    if image is None:
-
-        raise ValueError(
-            f"Unable to read image: {image_path}"
-        )
-
-
-    # ==========================================
-    # PREPARE ARTIFACT PATH
-    # ==========================================
-
+    image_path = Path(image_path)
     artifact_path = None
+    legacy_path = None
 
     if output_dir:
-
-        output_dir = Path(
-            output_dir
-        )
-
-        output_dir.mkdir(
-            parents=True,
-            exist_ok=True
-        )
-
-        artifact_path = (
-
-            output_dir /
-
-            f"{Path(image_path).stem}_copy_move.jpg"
-
-        )
-
-
-    # ==========================================
-    # DEFAULT RESULT
-    # ==========================================
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        artifact_path = output_dir / "copymove.png"
+        legacy_path = output_dir / f"{image_path.stem}_copy_move.jpg"
 
     result = {
-
-        "verdict":
-            "No Copy-Move Detected",
-
-        "copy_move_detected":
-            False,
-
-        "copy_move_score":
-            0.0,
-
-        "matched_points":
-            0,
-
-        "inliers":
-            0,
-
-        "spatial_matches":
-            0,
-
-        "artifact":
-            str(artifact_path)
-            if artifact_path
-            else None
-
+        "verdict": "No Copy-Move Detected",
+        "copy_move_detected": False,
+        "copy_move_score": 0.0,
+        "matched_points": 0,
+        "inliers": 0,
+        "spatial_matches": 0,
+        "artifact": str(artifact_path) if artifact_path else None,
+        "legacy_artifact": str(legacy_path) if legacy_path else None,
     }
 
-
-    # ==========================================
-    # CONVERT TO GRAYSCALE
-    # ==========================================
-
-    gray = cv2.cvtColor(
-
-        image,
-
-        cv2.COLOR_BGR2GRAY
-
-    )
-
-
-    # ==========================================
-    # ORB FEATURE DETECTION
-    # ==========================================
-
-    orb = cv2.ORB_create(
-
-        nfeatures=10000,
-
-        scaleFactor=1.2,
-
-        nlevels=8,
-
-        edgeThreshold=31,
-
-        patchSize=31,
-
-        fastThreshold=10
-
-    )
-
-
-    keypoints, descriptors = (
-
-        orb.detectAndCompute(
-
-            gray,
-
-            None
-
-        )
-
-    )
-
-
-    # ==========================================
-    # CHECK FEATURES
-    # ==========================================
-
-    if (
-
-        descriptors is None
-
-        or
-
-        len(keypoints) < 10
-
-    ):
-
-        if artifact_path:
-
-            cv2.imwrite(
-
-                str(artifact_path),
-
-                image
-
-            )
-
-        return result
-
-
-    # ==========================================
-    # BF MATCHER
-    # ==========================================
-
-    matcher = cv2.BFMatcher(
-
-        cv2.NORM_HAMMING,
-
-        crossCheck=False
-
-    )
-
-
-    # ==========================================
-    # SELF MATCHING
-    #
-    # We still compare descriptors within the
-    # same image, but we explicitly remove:
-    #
-    # 1. Self matches
-    # 2. Spatially-near matches
-    #
-    # This is important for copy-move detection.
-    # ==========================================
-
-    matches = matcher.knnMatch(
-
-        descriptors,
-
-        descriptors,
-
-        k=3
-
-    )
-
-
-    # ==========================================
-    # CONFIGURATION
-    # ==========================================
-
-    RATIO_THRESHOLD = 0.70
-
-    MIN_SPATIAL_DISTANCE = 50
-
-    good_matches = []
-
-
-    # ==========================================
-    # RATIO TEST + SPATIAL SEPARATION
-    # ==========================================
-
-    for pair in matches:
-
-        if len(pair) < 3:
-
-            continue
-
-
-        m = pair[0]
-
-        n = pair[1]
-
-        p = pair[2]
-
-
-        # --------------------------------------
-        # REMOVE SELF MATCH
-        # --------------------------------------
-
-        if (
-
-            m.queryIdx
-
-            ==
-
-            m.trainIdx
-
-        ):
-
-            # Find the first non-self candidate
-
-            candidates = [
-
-                match
-
-                for match in pair
-
-                if match.queryIdx
-                !=
-                match.trainIdx
-
-            ]
-
-            if len(candidates) < 2:
-
-                continue
-
-            m = candidates[0]
-
-            n = candidates[1]
-
-
-        # --------------------------------------
-        # RATIO TEST
-        # --------------------------------------
-
-        if (
-
-            m.distance
-
-            >=
-
-            RATIO_THRESHOLD * n.distance
-
-        ):
-
-            continue
-
-
-        # --------------------------------------
-        # GET KEYPOINT LOCATIONS
-        # --------------------------------------
-
-        point1 = np.array(
-
-            keypoints[
-                m.queryIdx
-            ].pt
-
-        )
-
-
-        point2 = np.array(
-
-            keypoints[
-                m.trainIdx
-            ].pt
-
-        )
-
-
-        # --------------------------------------
-        # SPATIAL DISTANCE
-        # --------------------------------------
-
-        spatial_distance = np.linalg.norm(
-
-            point1
-
-            -
-
-            point2
-
-        )
-
-
-        # --------------------------------------
-        # REMOVE LOCAL / NEARBY MATCHES
-        #
-        # A genuine copy-move region should
-        # generally appear at a different
-        # spatial location.
-        # --------------------------------------
-
-        if (
-
-            spatial_distance
-
-            <
-
-            MIN_SPATIAL_DISTANCE
-
-        ):
-
-            continue
-
-
-        good_matches.append(
-
-            m
-
-        )
-
-
-    # ==========================================
-    # MATCHED POINT COUNT
-    # ==========================================
-
-    result["matched_points"] = (
-
-        len(good_matches)
-
-    )
-
-    result["spatial_matches"] = (
-
-        len(good_matches)
-
-    )
-
-
-    # ==========================================
-    # NOT ENOUGH MATCHES
-    # ==========================================
-
-    if len(good_matches) < 4:
-
-        if artifact_path:
-
-            cv2.imwrite(
-
-                str(artifact_path),
-
-                image
-
-            )
-
-        return result
-
-
-    # ==========================================
-    # EXTRACT MATCH POINTS
-    # ==========================================
-
-    src_pts = np.float32([
-
-        keypoints[
-            match.queryIdx
-        ].pt
-
-        for match in good_matches
-
-    ]).reshape(
-
-        -1,
-
-        1,
-
-        2
-
-    )
-
-
-    dst_pts = np.float32([
-
-        keypoints[
-            match.trainIdx
-        ].pt
-
-        for match in good_matches
-
-    ]).reshape(
-
-        -1,
-
-        1,
-
-        2
-
-    )
-
-
-    # ==========================================
-    # RANSAC HOMOGRAPHY
-    # ==========================================
+    image = None
+    gray = None
+    visualization = None
+    orb = None
+    keypoints = None
+    descriptors = None
 
     try:
+        with safe_image_copy(image_path) as tmp_path:
+            image = cv2.imread(str(tmp_path))
+            if image is None:
+                raise ValueError(f"Unable to read image: {image_path}")
 
-        homography, mask = cv2.findHomography(
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        max_side = 1200
+        if max(h, w) > max_side:
+            scale = max_side / max(h, w)
+            gray = cv2.resize(gray, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
-            src_pts,
-
-            dst_pts,
-
-            cv2.RANSAC,
-
-            5.0
-
+        orb = cv2.ORB_create(
+            nfeatures=2800,
+            scaleFactor=1.2,
+            nlevels=6,
+            edgeThreshold=31,
+            patchSize=31,
+            fastThreshold=12,
         )
+        keypoints, descriptors = orb.detectAndCompute(gray, None)
 
-    except cv2.error:
+        if descriptors is None or len(keypoints) < 10:
+            if artifact_path:
+                atomic_cv2_write(artifact_path, image)
+            return result
 
-        homography = None
+        matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+        matches = matcher.knnMatch(descriptors, descriptors, k=2)
 
-        mask = None
+        RATIO_THRESHOLD = 0.75
+        MIN_SPATIAL_DISTANCE = 50
+        MAX_CANDIDATES = 250
+        good_matches = []
 
+        for pair in matches:
+            if len(pair) < 2:
+                continue
+            m, n = pair[0], pair[1]
+            if m.queryIdx == m.trainIdx:
+                continue
+            if m.distance >= RATIO_THRESHOLD * n.distance:
+                continue
+            p1 = np.array(keypoints[m.queryIdx].pt)
+            p2 = np.array(keypoints[m.trainIdx].pt)
+            if np.linalg.norm(p1 - p2) < MIN_SPATIAL_DISTANCE:
+                continue
+            good_matches.append(m)
+            if len(good_matches) >= MAX_CANDIDATES:
+                break
 
-    # ==========================================
-    # HOMOGRAPHY FAILED
-    # ==========================================
+        result["matched_points"] = len(good_matches)
+        result["spatial_matches"] = len(good_matches)
 
-    if (
+        if len(good_matches) < 4:
+            if artifact_path:
+                atomic_cv2_write(artifact_path, image)
+            return result
 
-        homography is None
+        src_pts = np.float32([keypoints[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([keypoints[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
-        or
+        try:
+            homography, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+        except cv2.error:
+            homography, mask = None, None
 
-        mask is None
+        if homography is None or mask is None:
+            if artifact_path:
+                atomic_cv2_write(artifact_path, image)
+            return result
 
-    ):
+        inliers = int(mask.ravel().sum())
+        result["inliers"] = inliers
+        score = inliers / max(len(good_matches), 1)
+        result["copy_move_score"] = round(float(score), 4)
+
+        copy_move_detected = len(good_matches) >= 10 and inliers >= 8 and score >= 0.20
+        result["copy_move_detected"] = copy_move_detected
+        if copy_move_detected:
+            result["verdict"] = "Potential Copy-Move Forgery"
+
+        visualization = image.copy()
+        for index, match in enumerate(good_matches):
+            if mask[index]:
+                x1, y1 = map(int, keypoints[match.queryIdx].pt)
+                x2, y2 = map(int, keypoints[match.trainIdx].pt)
+                cv2.circle(visualization, (x1, y1), 6, (0, 0, 255), -1)
+                cv2.circle(visualization, (x2, y2), 6, (0, 255, 0), -1)
+                cv2.line(visualization, (x1, y1), (x2, y2), (255, 0, 0), 1)
 
         if artifact_path:
-
-            cv2.imwrite(
-
-                str(artifact_path),
-
-                image
-
-            )
+            atomic_cv2_write(artifact_path, visualization)
+            if legacy_path:
+                try:
+                    atomic_cv2_write(legacy_path, visualization)
+                except Exception:
+                    pass
 
         return result
 
-
-    # ==========================================
-    # RANSAC INLIERS
-    # ==========================================
-
-    inliers = int(
-
-        mask.ravel().sum()
-
-    )
-
-
-    result["inliers"] = (
-
-        inliers
-
-    )
-
-
-    # ==========================================
-    # COPY-MOVE SCORE
-    # ==========================================
-
-    score = (
-
-        inliers
-
-        /
-
-        max(
-
-            len(good_matches),
-
-            1
-
-        )
-
-    )
-
-
-    result["copy_move_score"] = round(
-
-        float(score),
-
-        4
-
-    )
-
-
-    # ==========================================
-    # DETECTION THRESHOLD
-    #
-    # We require both:
-    #
-    # - Minimum number of spatial matches
-    # - Minimum RANSAC inliers
-    # - Minimum inlier ratio
-    #
-    # This avoids declaring forgery from
-    # a few random matches.
-    # ==========================================
-
-    copy_move_detected = (
-
-        len(good_matches) >= 10
-
-        and
-
-        inliers >= 8
-
-        and
-
-        score >= 0.20
-
-    )
-
-
-    result["copy_move_detected"] = (
-
-        copy_move_detected
-
-    )
-
-
-    # ==========================================
-    # VERDICT
-    # ==========================================
-
-    if copy_move_detected:
-
-        result["verdict"] = (
-
-            "Potential Copy-Move Forgery"
-
-        )
-
-
-    # ==========================================
-    # VISUALIZATION
-    # ==========================================
-
-    visualization = image.copy()
-
-
-    for index, match in enumerate(
-
-        good_matches
-
-    ):
-
-        # --------------------------------------
-        # Only draw RANSAC inliers
-        # --------------------------------------
-
-        if mask[index]:
-
-            x1, y1 = map(
-
-                int,
-
-                keypoints[
-                    match.queryIdx
-                ].pt
-
-            )
-
-
-            x2, y2 = map(
-
-                int,
-
-                keypoints[
-                    match.trainIdx
-                ].pt
-
-            )
-
-
-            # ----------------------------------
-            # Draw source point
-            # ----------------------------------
-
-            cv2.circle(
-
-                visualization,
-
-                (x1, y1),
-
-                6,
-
-                (0, 0, 255),
-
-                -1
-
-            )
-
-
-            # ----------------------------------
-            # Draw destination point
-            # ----------------------------------
-
-            cv2.circle(
-
-                visualization,
-
-                (x2, y2),
-
-                6,
-
-                (0, 255, 0),
-
-                -1
-
-            )
-
-
-            # ----------------------------------
-            # Connect duplicated regions
-            # ----------------------------------
-
-            cv2.line(
-
-                visualization,
-
-                (x1, y1),
-
-                (x2, y2),
-
-                (255, 0, 0),
-
-                1
-
-            )
-
-
-    # ==========================================
-    # SAVE ARTIFACT
-    # ==========================================
-
-    if artifact_path:
-
-        cv2.imwrite(
-
-            str(artifact_path),
-
-            visualization
-
-        )
-
-
-    # ==========================================
-    # DEBUG
-    # ==========================================
-
-    print(
-
-        "\n========== COPY-MOVE RESULT =========="
-
-    )
-
-    print(
-
-        "Image:",
-
-        image_path
-
-    )
-
-    print(
-
-        "Keypoints:",
-
-        len(keypoints)
-
-    )
-
-    print(
-
-        "Spatial Matches:",
-
-        len(good_matches)
-
-    )
-
-    print(
-
-        "RANSAC Inliers:",
-
-        inliers
-
-    )
-
-    print(
-
-        "Copy-Move Score:",
-
-        result["copy_move_score"]
-
-    )
-
-    print(
-
-        "Detected:",
-
-        copy_move_detected
-
-    )
-
-    print(
-
-        "======================================\n"
-
-    )
-
-
-    return result
+    finally:
+        image = None
+        gray = None
+        visualization = None
+        orb = None
+        keypoints = None
+        descriptors = None

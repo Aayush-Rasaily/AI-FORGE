@@ -131,11 +131,9 @@ def extract_font_features(word_img):
 # Main Analysis
 # ==========================================
 
-def analyze_font_consistency(image_path):
-
+def analyze_font_consistency(image_path, layout_data=None, analysis_dir=None):
     image = cv2.imread(str(image_path))
-
-    layout = analyze_text_layout(image_path)
+    layout = layout_data or analyze_text_layout(image_path, analysis_dir=analysis_dir)
 
     words = []
 
