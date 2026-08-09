@@ -285,19 +285,17 @@ This project is licensed under the MIT License.
 
 ---
 
-# 👨‍💻 Developer
+# 👨‍💻 Developers
 
 **Aayush Rasaily**
 
 B.E Artificial Intelligence & Data Science
 
+**Aryan Kathyanian**
+
+B.E. Artificial Intelligence and Data Science
+
 CMR Institute of Technology
-
-📧 Email: aayushrasaily04@gmail.com
-
-🔗 LinkedIn: https://linkedin.com/in/your-profile
-
-🌐 GitHub: https://github.com/your-username
 
 ---
 
