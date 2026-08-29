@@ -45,7 +45,26 @@ def run_video_agent(video_analysis: Optional[Dict[str, Any]] = None) -> Dict[str
             0.8,
         ))
 
-    if deepfake_frames > 0:
+    timeline = summary.get("timeline") or []
+    if timeline:
+        findings.append(build_finding(
+            "video",
+            f"Extracted deep timeline anomalies across {len(timeline)} suspicious video segments.",
+            "Temporal forensic pipeline localized anomalies to specific keyframes.",
+            0.85,
+        ))
+
+        # Add top 3 critical anomalies from timeline
+        critical_events = [ev for ev in timeline if ev.get("severity") in ("Critical", "High")]
+        for ev in critical_events[:3]:
+            findings.append(build_finding(
+                "video",
+                f"[{ev.get('timestamp')}] {ev.get('finding')}: {ev.get('reason')}",
+                f"Evidence: {ev.get('detector')}",
+                ev.get("confidence", 0.9),
+            ))
+
+    if deepfake_frames > 0 and not timeline:
         findings.append(build_finding(
             "video",
             f"{deepfake_frames} frame(s) flagged with deepfake/manipulation signals.",

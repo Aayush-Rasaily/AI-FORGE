@@ -8,17 +8,25 @@ import {
   ImageOff,
   Loader2,
 } from "lucide-react";
+import { apiFetch, getArtifactUrl } from "../services/api";
+import { isBackendGateOnline } from "../services/connectivityGate";
 
-function ArtifactCard({ title, description, artifactUrl }) {
-  const [loading, setLoading] = useState(true);
+function ArtifactCard({ title, description, artifactUrl, available = true }) {
+  const [loading, setLoading] = useState(Boolean(artifactUrl && available));
   const [error, setError] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [hovered, setHovered] = useState(false);
 
+  const resolvedUrl = artifactUrl && available ? getArtifactUrl(artifactUrl) : "";
+  const showImage = Boolean(resolvedUrl && available);
+
   const handleDownload = async () => {
-    if (!artifactUrl) return;
+    if (!resolvedUrl || !isBackendGateOnline()) return;
     try {
-      const res = await fetch(artifactUrl);
+      const path = artifactUrl.startsWith("/api/")
+        ? artifactUrl.replace(/^\/api\//, "")
+        : artifactUrl;
+      const res = await apiFetch(path.startsWith("http") ? path : path);
       if (!res.ok) return;
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -48,10 +56,17 @@ function ArtifactCard({ title, description, artifactUrl }) {
         </div>
 
         <div className="relative overflow-hidden bg-[#0B1120]">
-          {!artifactUrl ? (
-            <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 text-slate-600">
+          {!showImage ? (
+            <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 p-4 text-center text-slate-600">
               <ImageOff className="h-8 w-8" />
-              <p className="text-sm">Artifact not available</p>
+              <p className="text-sm">
+                {artifactUrl && available === false
+                  ? "Visualization pending"
+                  : "Artifact not available"}
+              </p>
+              <p className="text-[11px] text-slate-600">
+                Forensic overlay will appear when generation completes.
+              </p>
             </div>
           ) : error ? (
             <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 p-4 text-center">
@@ -68,7 +83,7 @@ function ArtifactCard({ title, description, artifactUrl }) {
               )}
 
               <img
-                src={artifactUrl}
+                src={isBackendGateOnline() ? (resolvedUrl || artifactUrl) : ""}
                 alt={title}
                 className={`w-full object-contain transition-transform duration-300 ${
                   hovered ? "scale-105" : "scale-100"

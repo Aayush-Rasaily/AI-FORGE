@@ -20,6 +20,7 @@ logger = logging.getLogger("ai_forge.learning")
 LEARNING_DIR = Path("data/learning")
 THRESHOLDS_FILE = LEARNING_DIR / "adaptive_thresholds.json"
 MODEL_REGISTRY_FILE = LEARNING_DIR / "model_registry.json"
+DETECTOR_FEEDBACK_LOG = LEARNING_DIR / "detector_feedback.jsonl"
 
 DEFAULT_THRESHOLDS = {
     "risk_high": 61.0,
@@ -198,6 +199,76 @@ def list_model_versions(model_name: Optional[str] = None) -> List[Dict[str, Any]
         session.close()
 
 
+def submit_detector_feedback(
+    evidence_id: str,
+    *,
+    correct: bool,
+    analyst_id: str = "anonymous",
+    predicted_verdict: Optional[str] = None,
+    predicted_risk: Optional[float] = None,
+    notes: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Investigator ✓ Correct / ✗ Wrong — updates detector fusion weights only (no model retrain).
+    """
+    from backend.learning.weighting import update_from_case_feedback
+    from backend.engines.adapters import collect_detector_outputs
+
+    init_learning_db()
+    analysis = {}
+    try:
+        from backend.learning.benchmark import _load_analysis
+        analysis = _load_analysis(evidence_id)
+    except Exception:
+        pass
+
+    elevated: List[str] = []
+    if analysis:
+        detectors = collect_detector_outputs(analysis)
+        elevated = [
+            str(d.get("detector_name", "")).lower()
+            for d in detectors
+            if d.get("status") == "ok" and float(d.get("score") or 0) >= 0.28
+        ]
+    fusion = (analysis.get("evidence_fusion") or {}) if analysis else {}
+    if not elevated:
+        elevated = list((fusion.get("elevated_detectors") or [])[:8])
+
+    updated_weights = update_from_case_feedback(
+        elevated, correct=correct, evidence_id=evidence_id,
+    ) if elevated else {}
+
+    record = {
+        "id": str(uuid.uuid4()),
+        "evidence_id": evidence_id,
+        "analyst_id": analyst_id,
+        "correct": correct,
+        "predicted_verdict": predicted_verdict,
+        "predicted_risk": predicted_risk,
+        "elevated_detectors": elevated,
+        "updated_weights": updated_weights,
+        "notes": notes,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    LEARNING_DIR.mkdir(parents=True, exist_ok=True)
+    with open(DETECTOR_FEEDBACK_LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, default=str) + "\n")
+
+    # Also store legacy investigation feedback row
+    actual = predicted_verdict or ("confirmed" if correct else "rejected")
+    submit_feedback(
+        evidence_id,
+        actual_verdict=actual,
+        analyst_id=analyst_id,
+        predicted_verdict=predicted_verdict,
+        predicted_risk=predicted_risk,
+        notes=notes,
+        feedback_type="correct" if correct else "incorrect",
+    )
+
+    return record
+
+
 def get_learning_stats() -> Dict[str, Any]:
     init_learning_db()
     session = get_session()
@@ -205,11 +276,17 @@ def get_learning_stats() -> Dict[str, Any]:
         total_fb = session.query(InvestigationFeedback).count()
         pending = session.query(InvestigationFeedback).filter_by(used_for_training="false").count()
         models = session.query(ModelVersion).count()
+        from backend.learning.dashboard import get_evaluation_dashboard
+        from backend.learning.weighting import weight_summary
+
+        eval_dash = get_evaluation_dashboard()
         return {
             "total_feedback": total_fb,
             "pending_training": pending,
             "registered_models": models,
             "thresholds": get_adaptive_thresholds(),
+            "detector_weights": weight_summary(),
+            "evaluation": eval_dash,
         }
     finally:
         session.close()

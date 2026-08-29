@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+from backend.utils.bbox_schema import normalize_bbox as _nb
 
 def _load_gray_map(path: Optional[str], size: Tuple[int, int]) -> Optional[np.ndarray]:
     if not path:
@@ -32,8 +33,11 @@ def _extract_regions(mask: np.ndarray, min_area: int = 400) -> List[Dict[str, An
         if area < min_area:
             continue
         x, y, w, h = cv2.boundingRect(cnt)
+        # Always return canonical dict bbox — never a raw list
         regions.append({
-            "bbox": [x, y, x + w, y + h],
+            "bbox": {"x": int(x), "y": int(y), "width": int(w), "height": int(h)},
+            "bounding_box": {"x": int(x), "y": int(y), "width": int(w), "height": int(h)},
+            "coordinates": [int(x), int(y), int(x + w), int(y + h)],
             "area": int(area),
             "confidence": round(float(mask[y:y + h, x:x + w].mean()), 4),
         })
@@ -89,7 +93,10 @@ def build_suspicious_overlay(
     regions = _extract_regions(fused)
     boxed = original.copy()
     for i, region in enumerate(regions):
-        x1, y1, x2, y2 = region["bbox"]
+        # Safely unpack bbox — handles both dict and list format via normalize_bbox
+        b = _nb(region["bbox"])
+        x1, y1 = int(b["x"]), int(b["y"])
+        x2, y2 = int(b["x"] + b["width"]), int(b["y"] + b["height"])
         color = (0, 0, 255) if region["confidence"] >= 0.7 else (0, 165, 255)
         cv2.rectangle(boxed, (x1, y1), (x2, y2), color, 2)
         cv2.putText(

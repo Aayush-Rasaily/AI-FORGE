@@ -1,11 +1,13 @@
 from pathlib import Path
-
+import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from backend.analysis.ela import generate_ela, calculate_ela_score
 from backend.analysis.edge_detection import analyze_edges
 from backend.analysis.wavelet_analysis import analyze_wavelet
 from backend.utils.artifact_paths import artifact_path
+
+logger = logging.getLogger("ai_forge.image_forensics")
 
 
 def analyze_image(
@@ -41,15 +43,34 @@ def analyze_image(
             future_edge = executor.submit(analyze_edges, img_str, os.path.join(tmp, "edge.jpg"))
             future_wavelet = executor.submit(analyze_wavelet, img_str, os.path.join(tmp, "wave.jpg"))
 
-        ela_image = future_ela.result()
-        edge_result = future_edge.result()
-        wavelet_result = future_wavelet.result()
+        ela_image = None
+        edge_result = {}
+        wavelet_result = {}
+        try:
+            ela_image = future_ela.result()
+        except Exception as exc:
+            logger.error("ELA failed: %s", exc)
+        try:
+            edge_result = future_edge.result()
+        except Exception as exc:
+            logger.error("Edge analysis failed: %s", exc)
+            edge_result = {}
+        try:
+            wavelet_result = future_wavelet.result()
+        except Exception as exc:
+            logger.error("Wavelet analysis failed: %s", exc)
+            wavelet_result = {}
 
         if not save_artifacts:
             import shutil
             shutil.rmtree(tmp, ignore_errors=True)
 
-    ela_score = calculate_ela_score(ela_image)
+    ela_score = 0.0
+    if ela_image is not None:
+        try:
+            ela_score = calculate_ela_score(ela_image)
+        except Exception as exc:
+            logger.error("ELA score calculation failed: %s", exc)
 
     if not isinstance(edge_result, dict):
         edge_result = {}
@@ -75,6 +96,9 @@ def analyze_image(
         },
         "artifacts": artifacts,
         "artifacts_pending": not save_artifacts,
+        "ela_available": ela_image is not None,
+        "edge_available": bool(edge_result),
+        "wavelet_available": bool(wavelet_result),
     }
 
 

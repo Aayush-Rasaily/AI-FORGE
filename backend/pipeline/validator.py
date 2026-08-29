@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List
 
-from backend.utils.artifact_paths import ARTIFACT_FILES
+from backend.utils.artifact_paths import ARTIFACT_FILES, resolve_artifact_path
 
 
 class PipelineValidationError(Exception):
@@ -18,7 +18,18 @@ class PipelineValidationError(Exception):
 
 
 REQUIRED_ANALYSIS = ("analysis.json", "dashboard.json", "risk.json", "jury.json")
-REQUIRED_ARTIFACTS = tuple(ARTIFACT_FILES.values())
+REQUIRED_ARTIFACT_TYPES = (
+    "ela",
+    "edges",
+    "wavelet",
+    "copy_move",
+    "noise",
+    "heatmap",
+    "forgery_mask",
+    "bounding_boxes",
+    "difference",
+)
+REQUIRED_ARTIFACTS = tuple(ARTIFACT_FILES[name] for name in REQUIRED_ARTIFACT_TYPES)
 REQUIRED_REPORTS = (
     "report.pdf",
     "report_executive.pdf",
@@ -39,9 +50,13 @@ def validate_analysis_outputs(analysis_dir: Path, evidence_id: str) -> Dict[str,
         if not (analysis_dir / name).is_file():
             missing.append(name)
 
-    for name in REQUIRED_ARTIFACTS:
-        p = analysis_dir / name
-        if not p.is_file() or p.stat().st_size == 0:
+    for artifact_type, name in zip(REQUIRED_ARTIFACT_TYPES, REQUIRED_ARTIFACTS):
+        p = resolve_artifact_path(
+            evidence_id,
+            artifact_type,
+            analysis_dir=analysis_dir,
+        )
+        if p is None or not p.is_file() or p.stat().st_size == 0:
             missing.append(name)
 
     if missing:

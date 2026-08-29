@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import ExifTags, Image
 
+from backend.utils.safe_mapping import snapshot_items
+
 GPS_TAGS = {ExifTags.GPSTAGS[k]: k for k in ExifTags.GPSTAGS}
 
 
@@ -96,10 +98,14 @@ def extract_exif(image_path: str) -> Dict[str, Any]:
                 return result
 
             result["metadata_found"] = True
-            tag_map = {ExifTags.TAGS.get(k, str(k)): v for k, v in exif.items()}
-            result["raw_tags"] = {str(k): _safe_str(v) for k, v in exif.items()}
+            tag_map = {}
+            raw_tags = {}
+            for tag_id, value in snapshot_items(exif):
+                tag_map[ExifTags.TAGS.get(tag_id, str(tag_id))] = value
+                raw_tags[str(tag_id)] = _safe_str(value)
+            result["raw_tags"] = raw_tags
             result["tags"] = {k: _safe_str(v) for k, v in tag_map.items()}
-            result["metadata_count"] = len(exif)
+            result["metadata_count"] = len(raw_tags)
 
             result["camera_make"] = _safe_str(exif.get(271)) or None
             result["camera_model"] = _safe_str(exif.get(272)) or None

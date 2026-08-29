@@ -25,9 +25,9 @@ logger = logging.getLogger("ai_forge.report_service")
 
 CANONICAL = {
     "pdf": "report.pdf",
-    "executive": "report_executive.pdf",
-    "court": "report_court.pdf",
-    "technical": "report_technical.pdf",
+    "executive": "executive_summary.pdf",
+    "court": "court_report.pdf",
+    "technical": "technical_appendix.pdf",
     "json": "report.json",
     "html": "report.html",
     "docx": "report.docx",
@@ -230,9 +230,9 @@ def stream_download(
 
     name_map = {
         ("pdf", "full"): "report.pdf",
-        ("pdf", "executive"): "report_executive.pdf",
-        ("pdf", "court"): "report_court.pdf",
-        ("pdf", "technical"): "report_technical.pdf",
+        ("pdf", "executive"): "executive_summary.pdf",
+        ("pdf", "court"): "court_report.pdf",
+        ("pdf", "technical"): "technical_appendix.pdf",
         ("json", "full"): "report.json",
         ("html", "full"): "report.html",
         ("docx", "full"): "report.docx",
@@ -241,20 +241,15 @@ def stream_download(
     path = analysis_dir / filename
 
     try:
-        if fmt == "pdf" and template == "full":
-            if not (path.is_file() and path.stat().st_size > 500):
-                logger.info("PDF missing — generating from cached analysis | %s", evidence_id)
-                path = ensure_report_pdf(evidence_id, analysis_dir)
-        elif not (path.is_file() and path.stat().st_size > 100):
-            from backend.reports.exporter import export_report
-            import shutil
+        from backend.reports.exporter import export_report
+        import shutil
 
-            result = export_report(evidence_id, format=fmt, template=template)
-            src = Path(result["file_path"])
-            if src.exists():
-                if src.resolve() != path.resolve():
-                    shutil.copy2(src, path)
-                path = path if path.exists() else src
+        result = export_report(evidence_id, format=fmt, template=template)
+        src = Path(result["file_path"])
+        if src.exists():
+            if src.resolve() != path.resolve():
+                shutil.copy2(src, path)
+            path = path if path.exists() else src
 
         if not path.is_file() or path.stat().st_size < 100:
             return {"status": "failed", "reason": "Report file could not be generated."}
@@ -265,6 +260,9 @@ def stream_download(
             "path": str(path),
             "filename": f"{evidence_id}_{path.name}" if path.name == "report.pdf" else path.name,
             "media_type": media.get(fmt, "application/octet-stream"),
+            "verification_id": result.get("verification_id"),
+            "verification_hash": result.get("verification_hash"),
+            "verification_url": result.get("verification_url"),
         }
     except Exception as exc:
         logger.error("Download failed\n%s", traceback.format_exc())

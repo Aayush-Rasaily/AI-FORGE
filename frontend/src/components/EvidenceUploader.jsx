@@ -3,6 +3,7 @@ import {
   uploadEvidence,
   analyzeImage,
   analyzeDocument,
+  investigateEvidence,
   ApplicationError,
   ConnectivityError,
   formatApiError,
@@ -12,8 +13,8 @@ import { useBackend } from "../context/BackendConnectivity";
 import UploadZone from "./ui/UploadZone";
 import AnalysisLoader from "./ui/AnalysisLoader";
 
-async function processFile(file, analysisType, onProgress, forceDeep) {
-  const uploadResult = await uploadEvidence(file);
+async function processFile(file, analysisType, onProgress, forceDeep, caseId) {
+  const uploadResult = await uploadEvidence(file, caseId);
   const evidenceId = uploadResult.evidence_id;
 
   if (!evidenceId) {
@@ -21,6 +22,40 @@ async function processFile(file, analysisType, onProgress, forceDeep) {
   }
 
   const fileType = uploadResult.file_type;
+
+  if (analysisType === "investigate") {
+    const response = await investigateEvidence(evidenceId, { onProgress, forceDeep });
+    const inferredType =
+      response.plan?.evidence_type ||
+      (fileType === "pdf" ? "document" : fileType) ||
+      "image";
+    return {
+      filename: file.name,
+      evidenceId,
+      fileType: inferredType === "document" ? "document" : inferredType,
+      status: "completed",
+      analysis: response.analysis ?? {},
+      tampering: response.tampering ?? {},
+      dashboard: response.dashboard ?? {},
+      jury: response.jury ?? {},
+      documentAnalysis: response.document_analysis ?? null,
+      investigation: response,
+      verdict: response.verdict,
+      risk: response.risk || { score: response.risk_score, level: response.verdict },
+      confidence: response.confidence,
+      confidenceCalibration: response.confidence_calibration,
+      explanation: response.explanation,
+      correlation: response.correlation,
+      agents: response.agents,
+      timeline: response.timeline,
+      artifacts: response.artifacts ?? {},
+      reportsPending: response.reports_pending ?? true,
+      reportStatus: "processing",
+      hashes: uploadResult.hashes,
+      intakeTimestamp: uploadResult.intake_timestamp,
+      mode: "autonomous_investigation",
+    };
+  }
 
   if (analysisType === "image") {
     if (fileType !== "image") {
@@ -89,23 +124,31 @@ function EvidenceUploader({
   setResults,
   error,
   setError,
+  caseId,
+  ensureCaseId,
+  showOfflineBanner = true,
 }) {
   const { backendOnline } = useBackend();
   const isDocument = analysisType === "document";
+  const isInvestigate = analysisType === "investigate";
   const [progressEvents, setProgressEvents] = useState([]);
   const [forceDeep, setForceDeep] = useState(false);
 
   const acceptedTypes = isDocument
     ? ".pdf,.doc,.docx"
-    : ".jpg,.jpeg,.png,.webp";
+    : isInvestigate
+      ? ".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.mp4,.mov,.avi,.mkv,.webm"
+      : ".jpg,.jpeg,.png,.webp";
 
   const supportedText = isDocument
-    ? "Supported: PDF, DOCX (DOC: convert to PDF first)"
-    : "Supported: JPG, JPEG, PNG, WEBP";
+    ? "PDF · DOC · DOCX"
+    : isInvestigate
+      ? "PDF · JPG · PNG · MP4 · MOV"
+      : "JPG · JPEG · PNG · WEBP";
 
   const handleFilesSelected = (selectedFiles) => {
     if (!backendOnline) {
-      setError("Backend Offline — health check failed. Reconnect first.");
+      setError("The forensic service is offline. Reconnect before uploading evidence.");
       return;
     }
     setFiles(selectedFiles);
@@ -115,14 +158,14 @@ function EvidenceUploader({
 
   const handleAnalyze = async () => {
     if (!backendOnline) {
-      setError("Backend Offline — health check failed. Reconnect first.");
+      setError("The forensic service is offline. Reconnect before starting analysis.");
       return;
     }
     if (!files || files.length === 0) {
       setError(
         isDocument
           ? "Please select at least one document."
-          : "Please select at least one image."
+          : "Please select at least one evidence file."
       );
       return;
     }
@@ -133,27 +176,34 @@ function EvidenceUploader({
     setProgressEvents([]);
 
     try {
+      const resolvedCaseId =
+        caseId || (ensureCaseId ? await ensureCaseId(files[0]) : null);
+      if (!resolvedCaseId) {
+        throw new ApplicationError(
+          "An investigation record could not be created for this evidence.",
+          { status: 500 }
+        );
+      }
+
       const results = await Promise.allSettled(
         files.map((file) =>
           processFile(file, analysisType, (event) => {
             setProgressEvents((prev) => [...prev, event]);
-          }, forceDeep)
+          }, forceDeep, resolvedCaseId)
         )
       );
 
       const analysisResults = results.map((result, i) => {
         if (result.status === "fulfilled") {
-          return result.value;
+          return { ...result.value, caseId: resolvedCaseId };
         }
         const reason = result.reason;
-        let message = "Analysis failed";
-        if (reason instanceof ApplicationError) {
-          message = reason.message;
-        } else if (reason instanceof ConnectivityError) {
-          message = "Connectivity Error — retry. Backend Online status is unchanged.";
-        } else {
-          message = formatApiError(reason, "Analysis failed");
-        }
+        const message =
+          reason instanceof ApplicationError
+            ? reason.message
+            : reason instanceof ConnectivityError
+              ? "The forensic service could not be reached. Please retry."
+              : formatApiError(reason, "Analysis could not be completed");
         return {
           filename: files[i].name,
           evidenceId: null,
@@ -168,11 +218,11 @@ function EvidenceUploader({
       setResults(analysisResults);
 
       if (analysisResults.every((r) => r.status === "failed")) {
-        setError(analysisResults[0]?.error || "Analysis failed for all selected files.");
+        setError(analysisResults[0]?.error || "Analysis could not be completed for the selected files.");
       }
     } catch (err) {
       console.error("Evidence analysis error:", err);
-      setError(formatApiError(err, "Evidence analysis failed."));
+      setError(formatApiError(err, "Analysis could not be completed."));
     } finally {
       setProcessing(false);
     }
@@ -182,9 +232,9 @@ function EvidenceUploader({
 
   return (
     <>
-      {!backendOnline && (
-        <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-          Backend Offline — health check failed. Uploads are paused until reconnect.
+      {!backendOnline && showOfflineBanner && (
+        <div className="forge-inline-error">
+          The forensic service is offline. Uploads are paused until the connection is restored.
         </div>
       )}
 
@@ -193,7 +243,11 @@ function EvidenceUploader({
         multiple
         supportedText={supportedText}
         title={
-          isDocument ? "Upload Document Evidence" : "Upload Image Evidence"
+          isInvestigate
+            ? "Drop files here"
+            : isDocument
+              ? "Drop a document here"
+              : "Drop an image here"
         }
         files={files}
         onFilesSelected={handleFilesSelected}
@@ -202,15 +256,16 @@ function EvidenceUploader({
       />
 
       {files.length > 0 && !isDocument && (
-        <label className="mt-4 flex items-center gap-2 text-sm text-slate-400">
+        <label className="forge-check">
           <input
             type="checkbox"
             checked={forceDeep}
             onChange={(e) => setForceDeep(e.target.checked)}
             disabled={disabled}
-            className="rounded border-slate-600 bg-slate-800"
           />
-          Force deep scan (run all forensic modules even if quick scan passes)
+          {isInvestigate
+            ? "Include additional examination modules when available"
+            : "Include additional image examination modules when available"}
         </label>
       )}
 
@@ -218,28 +273,41 @@ function EvidenceUploader({
         <button
           onClick={handleAnalyze}
           disabled={disabled}
-          className="mt-6 w-full rounded-xl bg-gradient-to-r from-emerald-600 to-cyan-600 px-8 py-3.5 font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:from-emerald-500 hover:to-cyan-500 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+          className="forge-primary-action mt-4"
         >
           {processing
-            ? "Analyzing..."
+            ? "Analyzing"
             : !backendOnline
-              ? "Backend Offline"
-              : isDocument
-                ? "Analyze Document"
-                : "Analyze Images"}
+              ? "Service offline"
+              : "Begin forensic examination"}
         </button>
       )}
 
       <AnalysisLoader
         active={processing}
-        analysisType={analysisType}
+        analysisType={isInvestigate ? "image" : analysisType}
         fileCount={files.length}
         progressEvents={progressEvents}
       />
 
       {error && (
-        <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-red-400 text-sm">
-          {error}
+        <div className="forge-inline-error mt-4" role="alert">
+          {/please select|offline/i.test(error) ? (
+            <span>{error}</span>
+          ) : (
+            <>
+              <div>
+                <strong>Analysis could not be completed</strong>
+                <p>The evidence could not be processed at this time. Please try again.</p>
+                <p>{error}</p>
+              </div>
+              {files.length > 0 && (
+                <button type="button" onClick={handleAnalyze} disabled={disabled}>
+                  Retry analysis
+                </button>
+              )}
+            </>
+          )}
         </div>
       )}
     </>

@@ -25,9 +25,9 @@ FORMAT_MAP = {
     "docx": "report.docx",
     "html": "report.html",
     "json": "report.json",
-    "executive": "report_executive.pdf",
-    "court": "report_court.pdf",
-    "technical": "report_technical.pdf",
+    "executive": "executive_summary.pdf",
+    "court": "court_report.pdf",
+    "technical": "technical_appendix.pdf",
 }
 
 
@@ -231,7 +231,29 @@ def generate_reports(
             write_status(adir, status="processing", progress=15, report_ready=False)
             _generate_sync(evidence_id, adir, jury_data)
 
-        get_worker_pool().submit(_run)
+        try:
+            get_worker_pool().submit(_run)
+        except RuntimeError as exc:
+            # Shutdown can race with a completion callback during test or
+            # process teardown. Do not leave a report permanently queued.
+            logger.warning(
+                "report_generate_not_queued | evidence_id=%s | error=%s",
+                evidence_id,
+                exc,
+            )
+            write_status(
+                adir,
+                status="failed",
+                progress=0,
+                report_ready=False,
+                error="Report worker unavailable during shutdown.",
+            )
+            return {
+                "success": False,
+                "status": "failed",
+                "evidence_id": evidence_id,
+                "error": "Report worker unavailable during shutdown.",
+            }
         return {"success": True, "status": "queued", "evidence_id": evidence_id}
 
     return _generate_sync(evidence_id, adir, jury_data)

@@ -67,10 +67,14 @@ def _parse_detections(raw):
             continue
         x_coords = [p[0] for p in bbox]
         y_coords = [p[1] for p in bbox]
+        from backend.utils.bbox_schema import normalize_bbox as _nb, bbox_to_xyxy as _bte  # noqa
+        _canon = _nb(bbox)   # bbox is a polygon list here → produces {x,y,width,height}
         detections.append({
             "text": str(text),
             "confidence": float(confidence),
-            "bbox": bbox,
+            "bbox": bbox,          # keep polygon for visualisers
+            "bounding_box": _canon,  # canonical dict for report consumers
+            "coordinates": _bte(_canon),  # xyxy list
             "left": min(x_coords),
             "right": max(x_coords),
             "top": min(y_coords),

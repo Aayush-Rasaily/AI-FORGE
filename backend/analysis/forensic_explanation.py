@@ -1,58 +1,47 @@
 """
-Human-readable forensic verdict explanations.
+Human-readable forensic verdict explanations — reasoning-only via Explainable AI v2.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 def generate_forensic_explanation(
     verdict: str,
     signals: Dict[str, Any],
     findings: List[str] | None = None,
+    *,
+    analysis: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Generate a plain-language explanation for the verdict."""
-    findings = findings or []
-    parts: List[str] = []
+    """
+    Return investigation summary from Explainable AI / Forensic Reasoning only.
+    Never emits generic detector dumps or invented evidence.
+    """
+    if analysis:
+        xai = analysis.get("explainable_ai") or {}
+        if xai.get("investigation_summary"):
+            return str(xai["investigation_summary"])
+        if xai.get("executive_summary"):
+            return str(xai["executive_summary"])
+        reasoning = analysis.get("forensic_reasoning") or {}
+        if reasoning.get("narrative"):
+            return str(reasoning["narrative"])
+        try:
+            from backend.engines.adapters import collect_detector_outputs
+            from backend.engines.fusion_engine import fuse_detector_outputs
+            from backend.engines.reasoning_engine import run_forensic_reasoning
+            from backend.engines.explain_engine import build_explainable_ai
 
-    risk_high = "HIGH RISK" in verdict.upper() or "FORGED" in verdict.upper()
-    risk_med = "MEDIUM" in verdict.upper() or "SUSPICIOUS" in verdict.upper()
-
-    if not risk_high and not risk_med:
-        parts.append(
-            "The image shows consistent JPEG compression patterns with no duplicated regions detected."
-        )
-        if not signals.get("metadata_suspicious"):
-            parts.append("Metadata appears consistent with the image content.")
-        if float(signals.get("wavelet_score", 0)) < 0.3:
-            parts.append("No suspicious wavelet frequency artifacts were found.")
-        return " ".join(parts)
-
-    if float(signals.get("ela_score", 0)) >= 0.35:
-        parts.append(
-            "The ELA map reveals localized compression inconsistencies that may indicate editing or re-saving."
-        )
-    if signals.get("copy_move_detected") or float(signals.get("copy_move_score", 0)) >= 0.4:
-        parts.append(
-            "Copy-move analysis detected duplicated texture regions consistent with clone or paste manipulation."
-        )
-    if float(signals.get("wavelet_score", 0)) >= 0.35:
-        parts.append("Wavelet analysis shows abnormal high-frequency patterns in localized areas.")
-    if signals.get("metadata_suspicious"):
-        sw = signals.get("software") or "editing software"
-        parts.append(f"Metadata contains indicators of {sw}, which may suggest post-capture modification.")
-    if float(signals.get("noise_inconsistency", 0)) >= 0.3:
-        parts.append("Noise distribution is inconsistent across regions, suggesting possible compositing.")
-    if float(signals.get("tampering_score", 0)) >= 0.4:
-        parts.append("AI tampering classifier flagged anomalies consistent with synthetic or manipulated content.")
+            detectors = collect_detector_outputs(analysis)
+            fusion = analysis.get("evidence_fusion") or fuse_detector_outputs(detectors)
+            reasoning = run_forensic_reasoning(detectors, fusion, analysis)
+            regions = (analysis.get("localization") or {}).get("regions") or []
+            xai = build_explainable_ai(reasoning, fusion, regions=regions)
+            return xai.get("investigation_summary") or xai.get("executive_summary") or ""
+        except Exception:
+            pass
 
     if findings:
-        parts.append(f"Key findings: {'; '.join(str(f) for f in findings[:3])}.")
-
-    if not parts:
-        parts.append(
-            "Multiple weak forensic signals were detected. Manual review is recommended."
-        )
-
-    return " ".join(parts)
+        return f"Forensic examination: {verdict}. Documented findings: {'; '.join(findings[:3])}."
+    return f"Forensic examination conclusion: {verdict}."

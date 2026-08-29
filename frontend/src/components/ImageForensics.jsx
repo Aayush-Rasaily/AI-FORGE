@@ -21,7 +21,8 @@ import GanDetectionPanel from "./ui/GanDetectionPanel";
 import FaceForensicsPanel from "./ui/FaceForensicsPanel";
 import MetadataForensicsPanel from "./ui/MetadataForensicsPanel";
 import ExplainabilityPanel from "./ui/ExplainabilityPanel";
-import { downloadPDF, getArtifactUrl, getUnifiedArtifactUrl, getArtifactsStatus } from "../services/api";
+import { downloadPDF, getArtifactUrl, getUnifiedArtifactUrl, pollArtifactsReady, pollReportReadyLight, isArtifactAvailable } from "../services/api";
+import { isBackendGateOnline } from "../services/connectivityGate";
 import { Download } from "lucide-react";
 import ForensicViewer from "./ForensicViewer";
 import ForensicDashboard from "./ForensicDashboard";
@@ -47,6 +48,7 @@ function ForensicReport({ item, index }) {
   const [artifactsPending, setArtifactsPending] = useState(
     item.artifactsPending ?? false
   );
+  const [artifactRegistry, setArtifactRegistry] = useState(item.artifactRegistry || {});
   const [reportsPending, setReportsPending] = useState(item.reportsPending ?? true);
   const [reportDownloading, setReportDownloading] = useState(false);
   const [reportError, setReportError] = useState("");
@@ -83,76 +85,37 @@ function ForensicReport({ item, index }) {
   }, [item, dashboard.verdict, dashboard.explanation, dashboard.recommendation]);
 
   useEffect(() => {
-    if (!artifactsPending || !evidenceId) return undefined;
+    if (!artifactsPending || !evidenceId || !isBackendGateOnline()) return undefined;
 
-    let cancelled = false;
-    let attempts = 0;
-    const maxAttempts = 12;
+    const controller = new AbortController();
+    pollArtifactsReady(evidenceId, {
+      signal: controller.signal,
+      onUpdate: (status) => {
+        setArtifactsPending(false);
+        setArtifactRegistry(status.registry || {});
+        setAnalysis((prev) => ({
+          ...prev,
+          artifacts: { ...(prev.artifacts || {}), ...status.artifacts },
+          artifacts_pending: false,
+          explainability: prev.explainability?.success ? prev.explainability : prev.explainability,
+        }));
+      },
+    }).then((result) => {
+      if (result.status === "timeout") setArtifactsPending(false);
+    }).catch(() => {});
 
-    const poll = async () => {
-      if (cancelled || attempts >= maxAttempts) {
-        if (attempts >= maxAttempts) setArtifactsPending(false);
-        return;
-      }
-      attempts += 1;
-      try {
-        const status = await getArtifactsStatus(evidenceId);
-        if (cancelled) return;
-        if (status.status === "ready" && status.artifacts) {
-          setArtifactsPending(false);
-          setAnalysis((prev) => ({
-            ...prev,
-            artifacts: { ...(prev.artifacts || {}), ...status.artifacts },
-            artifacts_pending: false,
-          }));
-        }
-      } catch {
-        /* retry */
-      }
-    };
-
-    poll();
-    const interval = setInterval(poll, 2500);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
+    return () => controller.abort();
   }, [artifactsPending, evidenceId]);
 
   useEffect(() => {
-    if (!reportsPending || !evidenceId) return undefined;
+    if (!reportsPending || !evidenceId || !isBackendGateOnline()) return undefined;
 
-    let cancelled = false;
-    let attempts = 0;
-    const maxAttempts = 10;
+    const controller = new AbortController();
+    pollReportReadyLight(evidenceId, { signal: controller.signal })
+      .then(() => setReportsPending(false))
+      .catch(() => setReportsPending(false));
 
-    const poll = async () => {
-      if (cancelled || attempts >= maxAttempts) {
-        if (attempts >= maxAttempts) setReportsPending(false);
-        return;
-      }
-      attempts += 1;
-      try {
-        const { getReportStatus, generateReport } = await import("../services/api");
-        if (attempts === 1) await generateReport(evidenceId);
-        const status = await getReportStatus(evidenceId);
-        if (cancelled) return;
-        if (status.status === "completed" || status.report_ready || status.ready) {
-          setReportsPending(false);
-        } else if (status.status === "failed") {
-          setReportsPending(false);
-        }
-      } catch {
-        /* retry */
-      }
-    };
-
-    poll();
-    const interval = setInterval(poll, 800);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
+    return () => controller.abort();
   }, [reportsPending, evidenceId]);
 
   const moduleScores = [
@@ -207,9 +170,14 @@ function ForensicReport({ item, index }) {
     { key: "edges", title: "Edge Detection", description: "Structural boundary overlay" },
     { key: "wavelet", title: "Wavelet Analysis", description: "Frequency manipulation map" },
     { key: "copy_move", title: "Copy-Move Detection", description: "Matched keypoint visualization" },
+    { key: "noise", title: "Noise Analysis", description: "Residual noise inconsistency map" },
+    { key: "localization", title: "Localization", description: "Fused forgery heatmap" },
   ].map((item) => ({
     ...item,
     url: artifactUrl(item.key),
+    available:
+      isArtifactAvailable(artifactRegistry, item.key) ||
+      (!artifactsPending && Boolean(artifactUrl(item.key))),
   }));
 
   const explanation = analysis.explanation || analysis.recommendation || "";
@@ -399,7 +367,11 @@ function ForensicReport({ item, index }) {
       )}
 
       {explainability.success !== false && Object.keys(explainability).length > 0 && (
-        <ExplainabilityPanel explainability={explainability} />
+        <ExplainabilityPanel
+          explainability={explainability}
+          evidenceId={evidenceId}
+          registry={artifactRegistry}
+        />
       )}
 
       {/* Tampering Detection */}
@@ -462,6 +434,7 @@ function ForensicReport({ item, index }) {
               title={art.title}
               description={art.description}
               artifactUrl={art.url}
+              available={art.available}
             />
           ))}
         </div>

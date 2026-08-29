@@ -103,6 +103,40 @@ async def get_evidence_audit_log(
     return {"success": True, "evidence_id": evidence_id, "entries": entries, "count": len(entries)}
 
 
+@router.get("/evidence/{evidence_id}/audit/export")
+async def export_audit_log(evidence_id: str):
+    import csv
+    import json
+    import tempfile
+    import zipfile
+    from pathlib import Path
+    from fastapi.responses import FileResponse
+
+    entries = get_audit_log(evidence_id=evidence_id, limit=5000)
+    
+    temp_dir = Path(tempfile.mkdtemp())
+    zip_path = temp_dir / f"AuditLog_{evidence_id}.zip"
+    
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        # JSON
+        zf.writestr("audit_log.json", json.dumps(entries, indent=2))
+        
+        # CSV
+        import io
+        csv_buffer = io.StringIO()
+        if entries:
+            writer = csv.DictWriter(csv_buffer, fieldnames=entries[0].keys())
+            writer.writeheader()
+            writer.writerows(entries)
+        zf.writestr("audit_log.csv", csv_buffer.getvalue())
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"AuditLog_{evidence_id}.zip"
+    )
+
+
 @router.get("/audit")
 async def get_global_audit_log(
     user_id: Optional[str] = Query(None),

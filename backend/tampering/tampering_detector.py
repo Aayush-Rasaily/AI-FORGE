@@ -34,6 +34,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageChops, ImageEnhance, ExifTags
 
+from backend.utils.safe_mapping import is_mapping, snapshot_items
+
 
 # ============================================================
 # CONFIGURATION
@@ -58,7 +60,7 @@ EDGE_KERNEL_SIZE = 5
 # JSON SERIALIZATION
 # ============================================================
 
-def make_json_safe(value: Any) -> Any:
+def make_json_safe(value: Any, _stack: set | None = None) -> Any:
     """
     Convert NumPy/OpenCV values into standard Python types.
 
@@ -85,17 +87,23 @@ def make_json_safe(value: Any) -> Any:
     if isinstance(value, np.ndarray):
         return value.tolist()
 
-    if isinstance(value, dict):
-        return {
-            str(k): make_json_safe(v)
-            for k, v in value.items()
-        }
+    if _stack is None:
+        _stack = set()
 
-    if isinstance(value, (list, tuple, set)):
-        return [
-            make_json_safe(v)
-            for v in value
-        ]
+    if is_mapping(value) or isinstance(value, (list, tuple, set)):
+        object_id = id(value)
+        if object_id in _stack:
+            return "<circular>"
+        _stack.add(object_id)
+        try:
+            if is_mapping(value):
+                return {
+                    str(k): make_json_safe(v, _stack)
+                    for k, v in snapshot_items(value)
+                }
+            return [make_json_safe(v, _stack) for v in value]
+        finally:
+            _stack.discard(object_id)
 
     return str(value)
 
@@ -187,11 +195,25 @@ def perform_ela(
             np.max(gray)
         )
 
+        high_error_mask = (gray > ELA_HIGH_THRESHOLD).astype(np.uint8) * 255
         high_error_ratio = float(
             np.mean(
                 gray > ELA_HIGH_THRESHOLD
             )
         )
+
+        # Detect contours for bounding boxes
+        contours, _ = cv2.findContours(high_error_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        regions = []
+        for c in contours:
+            x, y, w, h = cv2.boundingRect(c)
+            # Filter tiny regions
+            if w > 10 and h > 10:
+                regions.append({
+                    "bbox": [x, y, w, h],
+                    "confidence": 0.90,
+                    "reason": "Local ELA hotspot indicating differing compression levels"
+                })
 
         #ELA suspicion score
         if high_error_ratio > 0.20:
@@ -229,6 +251,8 @@ def perform_ela(
                     suspicion_score,
                     4
                 ),
+                
+            "regions": regions,
 
             "message":
                 "ELA analysis completed successfully."
@@ -376,6 +400,19 @@ def analyze_edge_inconsistency(
                 local_variance
             )
         )
+        
+        # Extract regions
+        high_variance_mask = (local_variance > (np.mean(local_variance) + 3 * variance_std)).astype(np.uint8) * 255
+        contours, _ = cv2.findContours(high_variance_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        regions = []
+        for c in contours:
+            x, y, w, h = cv2.boundingRect(c)
+            if w > 10 and h > 10:
+                regions.append({
+                    "bbox": [x, y, w, h],
+                    "confidence": 0.85,
+                    "reason": "Edge inconsistency detected, possible splicing or cloning artifact."
+                })
 
         # Conservative suspicion score
         if variance_std > 2500:
@@ -411,6 +448,8 @@ def analyze_edge_inconsistency(
                     suspicion_score,
                     4
                 ),
+                
+            "regions": regions,
 
             "message":
                 "Edge inconsistency analysis completed."
@@ -455,7 +494,7 @@ def analyze_metadata(
 
         if exif_data:
 
-            for tag_id, value in exif_data.items():
+            for tag_id, value in snapshot_items(exif_data):
 
                 tag_name = ExifTags.TAGS.get(
                     tag_id,
@@ -663,6 +702,39 @@ def analyze_tampering(
         signals.append("No strong independent tampering indicators detected.")
 
     timing = timer.log_summary()
+    
+    # Aggregate regions from detectors
+    all_regions = []
+    
+    # Add ELA regions
+    if ela_result.get("regions"):
+        for r in ela_result["regions"]:
+            all_regions.append({
+                "bbox": r["bbox"],
+                "confidence": r["confidence"],
+                "reason": r["reason"],
+                "detector": "ELA"
+            })
+            
+    # Add Edge regions
+    if edge_result.get("regions"):
+        for r in edge_result["regions"]:
+            all_regions.append({
+                "bbox": r["bbox"],
+                "confidence": r["confidence"],
+                "reason": r["reason"],
+                "detector": "Edge Analysis"
+            })
+            
+    # Add Copy-Move regions
+    if copy_move_result.get("duplicated_regions"):
+        for r in copy_move_result["duplicated_regions"]:
+            all_regions.append({
+                "bbox": r["copied_area"]["bbox"],
+                "confidence": r["confidence"],
+                "reason": f"Potential copy-move clone from region (Cluster {r['cluster_id']})",
+                "detector": "Copy-Move"
+            })
 
     result = {
         "success": True,
@@ -684,6 +756,7 @@ def analyze_tampering(
             "wavelet": wavelet_result,
             "cnn": cnn_result,
         },
+        "regions": all_regions,
     }
 
     return make_json_safe(result)

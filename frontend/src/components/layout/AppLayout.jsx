@@ -1,52 +1,69 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Sidebar from "./Sidebar";
 import TopNav from "./TopNav";
-import ParticleBackground from "../ui/ParticleBackground";
 
-function AppLayout({ children, title, subtitle }) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+function readCollapsed() {
+  try {
+    return localStorage.getItem("forge-sidebar-collapsed") === "true";
+  } catch {
+    return false;
+  }
+}
+
+function AppLayout({ children, title, subtitle, contextLabel }) {
+  const [collapsed, setCollapsed] = useState(readCollapsed);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  return (
-    <div className="relative min-h-screen overflow-x-hidden text-white">
-      <ParticleBackground />
+  useEffect(() => {
+    try {
+      localStorage.setItem("forge-sidebar-collapsed", String(collapsed));
+    } catch {
+      /* ignore */
+    }
+  }, [collapsed]);
 
-      {/* Desktop Sidebar */}
+  useEffect(() => {
+    function onResize() {
+      if (window.innerWidth >= 1024) setMobileOpen(false);
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  return (
+    <div className="forge-shell">
       <div className="hidden lg:block">
-        <Sidebar
-          collapsed={sidebarCollapsed}
-          onToggle={() => setSidebarCollapsed((prev) => !prev)}
-        />
+        <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)} />
       </div>
 
-      {/* Mobile Sidebar Overlay */}
       {mobileOpen && (
         <>
-          <div
-            className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm lg:hidden"
+          <button
+            type="button"
+            className="forge-nav-backdrop lg:hidden"
+            aria-label="Close navigation"
             onClick={() => setMobileOpen(false)}
-            aria-hidden="true"
           />
-          <div className="fixed left-0 top-0 z-50 lg:hidden">
+          <div className="forge-mobile-drawer lg:hidden">
             <Sidebar collapsed={false} onToggle={() => setMobileOpen(false)} />
           </div>
         </>
       )}
 
-      {/* Main Content */}
       <div
-        className={`relative z-10 flex min-h-screen flex-col transition-all duration-300 ${
-          sidebarCollapsed ? "lg:ml-[72px]" : "lg:ml-64"
+        className={`forge-main flex min-w-0 flex-col ${
+          collapsed ? "forge-content-collapsed" : "forge-content-normal"
         }`}
       >
         <TopNav
-          onMenuToggle={() => setMobileOpen((prev) => !prev)}
+          onMenuToggle={() => setMobileOpen((value) => !value)}
+          onSidebarToggle={() => setCollapsed((value) => !value)}
           title={title}
           subtitle={subtitle}
+          contextLabel={contextLabel}
         />
-
-        <main className="flex-1 overflow-x-hidden p-4 md:p-6 lg:p-8">
-          <div className="mx-auto max-w-[1400px]">{children}</div>
+        <main className="forge-page">
+          <div className="forge-page-inner">{children}</div>
         </main>
       </div>
     </div>

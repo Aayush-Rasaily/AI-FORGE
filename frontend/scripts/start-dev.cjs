@@ -29,6 +29,13 @@ const child = spawn(process.execPath, args, {
   windowsHide: false,
 });
 
+function stopChild() {
+  if (!child.killed) child.kill();
+}
+
+process.once("SIGINT", stopChild);
+process.once("SIGTERM", stopChild);
+
 child.on("error", (error) => {
   console.error("Failed to start Vite:", error.message);
   process.exit(1);

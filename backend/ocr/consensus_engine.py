@@ -58,6 +58,96 @@ def _cluster_detections(all_dets: List[Tuple[str, Dict[str, Any]]]) -> List[List
     return clusters
 
 
+def _analyze_structured_text_map(detections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    anomalies = []
+    # Sort detections by y-coordinate (top) to find baselines
+    sorted_dets = sorted(detections, key=lambda d: d.get("top", 0))
+    
+    baselines = []
+    current_baseline = []
+    baseline_y = -1
+    
+    for det in sorted_dets:
+        y = det.get("top", 0)
+        h = det.get("height", 10)
+        
+        # If no current baseline, start one
+        if not current_baseline:
+            current_baseline.append(det)
+            baseline_y = y
+        # If on the same line (within 0.5 * height)
+        elif abs(y - baseline_y) < max(h, 10) * 0.5:
+            current_baseline.append(det)
+        else:
+            baselines.append(current_baseline)
+            current_baseline = [det]
+            baseline_y = y
+            
+    if current_baseline:
+        baselines.append(current_baseline)
+        
+    for idx, line in enumerate(baselines):
+        if len(line) < 2:
+            continue
+            
+        # Check alignment / baseline jitter
+        line_tops = [d.get("top", 0) for d in line]
+        line_bottoms = [d.get("top", 0) + d.get("height", 0) for d in line]
+        
+        avg_top = sum(line_tops) / len(line_tops)
+        avg_bottom = sum(line_bottoms) / len(line_bottoms)
+        avg_height = avg_bottom - avg_top
+        
+        for det in line:
+            top = det.get("top", 0)
+            bottom = det.get("top", 0) + det.get("height", 0)
+            h = det.get("height", 10)
+            
+            # Baseline jitter
+            if abs(top - avg_top) > h * 0.25 or abs(bottom - avg_bottom) > h * 0.25:
+                anomalies.append({
+                    "type": "baseline_jitter",
+                    "bbox": [det.get("left", 0), top, det.get("width", 0), h],
+                    "text": det.get("text", ""),
+                    "reason": "Text is misaligned with the rest of the line (baseline jitter).",
+                    "severity": "Medium"
+                })
+                
+            # Font size (height) anomaly
+            if avg_height > 0 and abs(h - avg_height) > avg_height * 0.35:
+                anomalies.append({
+                    "type": "font_size_mismatch",
+                    "bbox": [det.get("left", 0), top, det.get("width", 0), h],
+                    "text": det.get("text", ""),
+                    "reason": f"Font size ({h:.1f}px) significantly differs from line average ({avg_height:.1f}px).",
+                    "severity": "High"
+                })
+                
+        # Spacing anomaly (kerning/word gap)
+        # Sort line left-to-right
+        line = sorted(line, key=lambda d: d.get("left", 0))
+        gaps = []
+        for i in range(len(line) - 1):
+            gap = line[i+1].get("left", 0) - (line[i].get("left", 0) + line[i].get("width", 0))
+            if gap > 0:
+                gaps.append((i, gap))
+                
+        if len(gaps) > 1:
+            avg_gap = sum(g[1] for g in gaps) / len(gaps)
+            for i, gap in gaps:
+                if avg_gap > 2 and gap > avg_gap * 3.5:
+                    det1, det2 = line[i], line[i+1]
+                    anomalies.append({
+                        "type": "irregular_spacing",
+                        "bbox": [det1.get("left", 0), det1.get("top", 0), det2.get("left", 0) + det2.get("width", 0) - det1.get("left", 0), max(det1.get("height", 10), det2.get("height", 10))],
+                        "text": f"{det1.get('text', '')} ... {det2.get('text', '')}",
+                        "reason": f"Irregular word spacing detected ({gap:.1f}px vs {avg_gap:.1f}px avg).",
+                        "severity": "Medium"
+                    })
+                    
+    return anomalies
+
+
 def _vote_text(cluster: List[Tuple[str, Dict[str, Any]]]) -> Tuple[str, float]:
     votes: Counter = Counter()
     weight_sum = 0.0
@@ -273,6 +363,7 @@ def _package_result(
         "detected_language": payload.get("detected_language", primary.get("detected_language", "en")),
         "word_count": payload.get("word_count", len((payload.get("full_text") or "").split())),
         "mismatch_regions": payload.get("mismatch_regions", mismatch_regions),
+        "structured_text_anomalies": _analyze_structured_text_map(payload.get("detections", primary.get("detections", []))),
         "consensus": {
             "engines_run": multi_result.get("engines_run", []),
             "engines_succeeded": [

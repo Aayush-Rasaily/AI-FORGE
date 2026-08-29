@@ -6,6 +6,7 @@ Additive endpoints (do not replace /api/evidence/* or /api/reports/*).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -140,14 +141,14 @@ async def get_report(evidence_id: str):
     }
     """
     try:
-        payload = get_report_payload(evidence_id)
+        payload = await asyncio.to_thread(get_report_payload, evidence_id)
         try:
             analysis_dir = get_analysis_dir(evidence_id, create=False)
-            bundle = load_analysis_bundle(analysis_dir)
+            bundle = await asyncio.to_thread(load_analysis_bundle, analysis_dir)
             if bundle:
                 payload["risk"] = bundle.get("risk", {})
                 payload["jury"] = bundle.get("jury", {})
-            dash = _load_dashboard(analysis_dir)
+            dash = await asyncio.to_thread(_load_dashboard, analysis_dir)
             if dash:
                 payload["dashboard"] = dash
         except Exception:
@@ -187,14 +188,25 @@ async def download_report(
             )
         return _ok({"status": "failed", "reason": "File not found"}, 404)
 
-    result = stream_download(evidence_id, fmt=fmt, template=tpl)
+    result = await asyncio.to_thread(
+        lambda: stream_download(evidence_id, fmt=fmt, template=tpl),
+    )
     if result.get("status") == "failed":
         return _ok(result, 503)
+
+    headers = {}
+    if result.get("verification_id"):
+        headers["X-Verification-Id"] = result["verification_id"]
+    if result.get("verification_hash"):
+        headers["X-Verification-Hash"] = result["verification_hash"]
+    if result.get("verification_url"):
+        headers["X-Verification-Url"] = result["verification_url"]
 
     return FileResponse(
         path=result["path"],
         filename=result["filename"],
         media_type=result["media_type"],
+        headers=headers or None,
     )
 
 
@@ -202,12 +214,13 @@ async def download_report(
 async def get_dashboard(evidence_id: str):
     """Return dashboard.json for frontend."""
     analysis_dir = get_analysis_dir(evidence_id, create=False)
-    dashboard = _load_dashboard(analysis_dir)
+    dashboard = await asyncio.to_thread(_load_dashboard, analysis_dir)
     if not dashboard:
-        bundle = load_analysis_bundle(analysis_dir)
+        bundle = await asyncio.to_thread(load_analysis_bundle, analysis_dir)
         if not bundle:
             return _ok({"success": False, "status": "failed", "reason": "Dashboard not found."}, 404)
-        dashboard = build_dashboard(
+        dashboard = await asyncio.to_thread(
+            build_dashboard,
             evidence_id,
             bundle["analysis"],
             bundle.get("tampering", {}),
@@ -220,26 +233,32 @@ async def get_dashboard(evidence_id: str):
 @router.get("/artifacts/{evidence_id}")
 async def list_artifacts(evidence_id: str):
     """Return artifact URLs and on-disk status."""
-    from backend.utils.artifact_paths import artifact_api_urls, ARTIFACT_FILES
+    from backend.services.artifact_service import get_artifact_registry
+    from backend.utils.artifact_paths import ARTIFACT_FILES, artifact_api_urls, resolve_artifact_path
 
     analysis_dir = get_analysis_dir(evidence_id, create=False)
     urls = artifact_api_urls(evidence_id)
+    registry = get_artifact_registry(analysis_dir)
     files = {}
-    for key, fname in ARTIFACT_FILES.items():
-        p = analysis_dir / fname
+    for key in ARTIFACT_FILES:
+        resolved = resolve_artifact_path(evidence_id, key, analysis_dir)
+        entry = registry.get(key, {})
         files[key] = {
             "url": urls.get(key),
-            "exists": p.is_file() and p.stat().st_size > 0,
-            "path": str(p),
+            "exists": bool(entry.get("available")) or (resolved is not None),
+            "available": bool(entry.get("available")) or (resolved is not None),
+            "path": str(resolved) if resolved else str(analysis_dir / "artifacts" / ARTIFACT_FILES[key]),
+            "score": entry.get("score"),
+            "confidence": entry.get("confidence"),
         }
-    return {"success": True, "evidence_id": evidence_id, "artifacts": files, "urls": urls}
+    return {"success": True, "evidence_id": evidence_id, "artifacts": files, "urls": urls, "registry": registry}
 
 
 @router.get("/timeline/{evidence_id}")
 async def get_timeline(evidence_id: str):
     """Return investigation timeline for evidence."""
     analysis_dir = get_analysis_dir(evidence_id, create=False)
-    bundle = load_analysis_bundle(analysis_dir)
+    bundle = await asyncio.to_thread(load_analysis_bundle, analysis_dir)
     if not bundle:
         return _ok({"success": False, "status": "failed", "reason": "Analysis not found."}, 404)
 
@@ -256,7 +275,9 @@ async def get_timeline(evidence_id: str):
             })
 
     try:
-        report_bundle = build_report_bundle(evidence_id, template="full")
+        report_bundle = await asyncio.to_thread(
+            lambda: build_report_bundle(evidence_id, template="full"),
+        )
         custody_timeline = report_bundle.get("timeline", [])
     except Exception:
         custody_timeline = []
@@ -264,9 +285,8 @@ async def get_timeline(evidence_id: str):
     dashboard_path = analysis_dir / "dashboard.json"
     dashboard_timeline = []
     if dashboard_path.exists():
-        with open(dashboard_path, encoding="utf-8") as f:
-            dash = json.load(f)
-            dashboard_timeline = dash.get("timeline", [])
+        dash = await asyncio.to_thread(_read_json_file, dashboard_path)
+        dashboard_timeline = dash.get("timeline", [])
 
     return {
         "success": True,
@@ -278,12 +298,111 @@ async def get_timeline(evidence_id: str):
     }
 
 
-def _load_dashboard(analysis_dir: Path) -> dict:
-    path = analysis_dir / "dashboard.json"
-    if not path.exists():
-        return {}
+@router.get("/localization/{evidence_id}")
+async def get_localization(evidence_id: str, refresh: bool = Query(False)):
+    """Forgery localization — fused heatmap, mask, regions (from cached artifacts)."""
+    try:
+        from backend.analysis.forgery_localization import ensure_localization, load_localization
+
+        if refresh:
+            data = await asyncio.to_thread(ensure_localization, evidence_id)
+        else:
+            data = await asyncio.to_thread(load_localization, evidence_id)
+            if not data:
+                data = await asyncio.to_thread(ensure_localization, evidence_id)
+        return _ok({"success": True, **data})
+    except Exception as exc:
+        logger.exception("localization failed: %s", exc)
+        return _ok({"success": False, "status": "failed", "reason": str(exc)[:500]})
+
+
+@router.get("/localization/{evidence_id}/original")
+async def get_localization_original(evidence_id: str):
+    from backend.evidence.paths import find_evidence_file
+
+    path = find_evidence_file(evidence_id)
+    if not path or not path.is_file():
+        return _ok({"status": "failed", "reason": "Evidence file not found"}, 404)
+    suffix = path.suffix.lower()
+    media = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+    }.get(suffix, "application/octet-stream")
+    return FileResponse(path=str(path), media_type=media)
+
+
+@router.get("/localization/{evidence_id}/file/{filename}")
+async def get_localization_file(evidence_id: str, filename: str):
+    allowed = {
+        "localization_heatmap.png",
+        "forgery_mask.png",
+        "forgery_mask_binary.png",
+        "localization_highlight.png",
+        "localization_diff.png",
+        "localization_regions.png",
+        "localization_polygons.png",
+        "localization_annotated.png",
+        "localization_attention.png",
+        "heatmap.png",
+        "attention_heatmap.png",
+        "localization_overlay.png",
+        "localization_mask.png",
+        "forensic_heatmap.png",
+        "combined_overlay.png",
+        "localization_summary.json",
+    }
+    if filename not in allowed or ".." in filename:
+        return _ok({"status": "failed", "reason": "Invalid file"}, 400)
+    analysis_dir = get_analysis_dir(evidence_id, create=False)
+    path = analysis_dir / filename
+    if not path.is_file():
+        try:
+            from backend.analysis.forgery_localization import ensure_localization
+
+            await asyncio.to_thread(ensure_localization, evidence_id)
+        except Exception:
+            pass
+        path = analysis_dir / filename
+    if not path.is_file():
+        return _ok({"status": "failed", "reason": "File not found"}, 404)
+    media_type = "application/json" if path.suffix.lower() == ".json" else "image/png"
+    return FileResponse(path=str(path), media_type=media_type)
+
+
+def _read_json_file(path: Path) -> dict:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def _load_dashboard(analysis_dir: Path) -> dict:
+    path = analysis_dir / "dashboard.json"
+    if not path.exists():
+        return {}
+    return _read_json_file(path)
+
+
+@router.get("/evidence/{evidence_id}/localization")
+async def get_evidence_localization_json(evidence_id: str):
+    """Returns the Phase 1 evidence_localization.json"""
+    analysis_dir = get_analysis_dir(evidence_id, create=False)
+    path = analysis_dir / "evidence_localization.json"
+    if not path.is_file():
+        return _ok({"status": "failed", "reason": "evidence_localization.json not found"}, 404)
+    return FileResponse(path=str(path), media_type="application/json")
+
+
+@router.get("/evidence/{evidence_id}/ocr-report")
+async def get_ocr_difference_report_json(evidence_id: str):
+    """Returns the Phase 2 ocr_difference_report.json"""
+    analysis_dir = get_analysis_dir(evidence_id, create=False)
+    path = analysis_dir / "ocr_difference_report.json"
+    if not path.is_file():
+        return _ok({"status": "failed", "reason": "ocr_difference_report.json not found"}, 404)
+    return FileResponse(path=str(path), media_type="application/json")
+

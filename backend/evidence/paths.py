@@ -21,6 +21,25 @@ for d in (LEGACY_UPLOAD_DIR, LEGACY_ANALYSIS_ROOT, ORIGINAL_DIR, WORKING_DIR, AN
     d.mkdir(parents=True, exist_ok=True)
 
 
+def get_evidence_artifacts_dir(evidence_id: str, *, create: bool = True) -> Path:
+    """
+    Production artifact vault: data/evidence/<evidence_id>/artifacts/
+    Mirrors are also written under the legacy analysis directory for compatibility.
+    """
+    path = EVIDENCE_ROOT / evidence_id / "artifacts"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_analysis_artifacts_dir(evidence_id: str, *, create: bool = True) -> Path:
+    """Legacy-compatible artifacts folder inside the analysis directory."""
+    path = get_analysis_dir(evidence_id, create=create) / "artifacts"
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def get_analysis_dir(evidence_id: str, *, create: bool = True) -> Path:
     """Primary analysis output directory (legacy path — used by all existing APIs)."""
     path = LEGACY_ANALYSIS_ROOT / evidence_id

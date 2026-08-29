@@ -267,10 +267,214 @@ def _build_report(
         ),
     }
 
+def _build_forensic_dossier(
+    agents: Dict[str, Dict[str, Any]],
+    final_verdict: str,
+    fused_risk: float,
+    localization_data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    import hashlib
+    import datetime
+    import json
+    from backend.contracts.forensic_finding import investigative_severity
+    from backend.utils.bbox_schema import region_bbox
+    
+    findings: List[Dict[str, Any]] = []
+    
+    # 1. Collect structured forensic findings if agents emit them natively
+    for agent_id, agent in agents.items():
+        if agent.get("forensic_findings"):
+            for ff in agent["forensic_findings"]:
+                if "source_agent" not in ff:
+                    ff["source_agent"] = agent.get("agent_name", agent_id)
+                findings.append(ff)
+        # 2. Convert raw 'findings' from agents into ForensicFinding
+        elif agent.get("findings"):
+            for idx, f in enumerate(agent["findings"]):
+                conf = f.get("confidence", 0.0)
+                identity = json.dumps(
+                    {"agent": agent_id, "index": idx, "finding": f},
+                    sort_keys=True,
+                    default=str,
+                )
+                item = {
+                    "finding_id": f.get("finding_id") or (
+                        "JURY-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16].upper()
+                    ),
+                    "page": f.get("page", 1),
+                    "location": f.get("location", "Unknown"),
+                    "field_name": f.get("what", "Document Feature"),
+                    "object_type": f.get("object_type", "region"),
+                    "detected_value": f.get("detected_value", "Unknown"),
+                    "claimed_original": f.get("claimed_original", "Unknown"),
+                    "edit_type": f.get("edit_type", "Anomaly"),
+                    "severity": investigative_severity(
+                        f.get("edit_type") or f.get("object_type") or f.get("what"),
+                        f.get("severity"),
+                        legal_or_authorization_impact=bool(
+                            f.get("is_legal_document") or f.get("authorization_impact")
+                        ),
+                    ).title(),
+                    "evidence": [f.get("why", "Suspicious region detected")],
+                    "plain_english_explanation": f.get("why", "Suspicious region detected"),
+                    "confidence_pct": round(conf * 100, 1),
+                    "confidence": conf,
+                    "detector_votes": {agent_id: True},
+                    "detectors": [agent_id],
+                    "source_agent": agent.get("agent_name", agent_id),
+                }
+                bbox = f.get("bbox") or f.get("bounding_box")
+                if bbox:
+                    try:
+                        normalized = region_bbox({"bbox": bbox})
+                        if normalized["width"] > 0 and normalized["height"] > 0:
+                            item["bbox"] = normalized
+                    except (TypeError, ValueError, KeyError):
+                        pass
+                findings.append(item)
+                
+    # Sort findings by confidence desc
+    findings.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+    
+    # Number them
+    for i, f in enumerate(findings):
+        f["finding_number"] = i + 1
+        
+    critical = sum(1 for f in findings if str(f.get("severity", "")).lower() == "critical")
+    suspicious = sum(
+        1 for f in findings
+        if str(f.get("severity", "")).lower() in {"high", "medium"}
+    )
+    
+    localization_array = []
+    if localization_data and localization_data.get("regions"):
+        for reg in localization_data["regions"]:
+            try:
+                bbox = region_bbox(reg)
+            except (TypeError, ValueError, KeyError):
+                continue
+            if bbox["width"] <= 0 or bbox["height"] <= 0:
+                continue
+            loc_dict = {key: int(bbox[key]) for key in ("x", "y", "width", "height")}
+            # Special case: logo / signature / metadata 
+            desc = reg.get("plain_english_explanation") or reg.get("reason") or "Manipulated region detected"
+            t = reg.get("edit_type") or reg.get("type", "Anomaly")
+            if "metadata" in t.lower() or t == "metadata_conflict":
+                # Do not use metadata as localization
+                continue
+            
+            localization_array.append({
+                "region_id": reg.get("region_id") or reg.get("id"),
+                "page": int(reg.get("page", 1)),
+                "type": t,
+                "confidence": round(float(reg.get("confidence", 0)), 4),
+                "location": loc_dict,
+                "description": desc
+            })
+    
+    explanations = []
+    
+    # Generate Human-Centered XAI Explanations
+    for loc in localization_array:
+        if loc["type"] == "None" or "No localized manipulation" in loc["description"]:
+            continue
+            
+        t = loc["type"]
+        conf = loc["confidence"]
+        bbox = loc["location"]
+        
+        severity = investigative_severity(t).title()
+        
+        # Reason and Impact Mapping
+        summary = "The highlighted region contains signs of digital editing."
+        reason = "The region shows forensic anomalies inconsistent with the rest of the document."
+        impact = "Potential document tampering."
+        
+        if t == "Pasted Signature":
+            summary = "The signature does not match the reference."
+            reason = "The signature appears to have been copied and pasted from another source."
+            impact = "Identity fraud or unauthorized contract approval."
+        elif t == "Copied Logo":
+            summary = "The logo appears digitally added."
+            reason = "The corporate logo shows signs of being inserted after the document was created."
+            impact = "Brand forgery or fake institutional document."
+        elif t == "Edited Currency Values":
+            summary = "This value seems altered."
+            reason = "The number differs from surrounding typography and shows editing artefacts."
+            impact = "Financial fraud or inflated insurance claims."
+        elif t == "Changed Numbers":
+            summary = "This value seems altered."
+            reason = "The number differs from surrounding typography and shows editing artefacts."
+            impact = "Financial or statistical misrepresentation."
+        elif t == "Modified Dates":
+            summary = "The date appears to have been changed."
+            reason = "The date format or typography is inconsistent with the rest of the text."
+            impact = "Contract manipulation or expired document extension."
+        elif t == "Inserted Text":
+            summary = "The text appears inserted."
+            reason = "The text style differs from nearby text and contains digital insertion artifacts."
+            impact = "Content manipulation and misrepresentation."
+        elif t == "Replaced Text":
+            summary = "The text style differs from nearby text."
+            reason = "The text was likely typed over erased original content."
+            impact = "Content manipulation."
+        elif t == "Copied Content":
+            summary = "Part of this image appears duplicated."
+            reason = "A section of the document has been copied and pasted over another area."
+            impact = "Information concealment or document tampering."
+        elif t == "Digitally Inserted Object":
+            summary = "The highlighted region contains signs of digital editing."
+            reason = "This area appears saved separately from the rest of the document."
+            impact = "Object insertion or content alteration."
+        elif t == "Pasted Stamp":
+            summary = "The stamp appears digitally added."
+            reason = "The stamp shows insertion artifacts instead of physical ink properties."
+            impact = "Fake certification or official approval bypass."
+        elif t == "Pasted Seal":
+            summary = "The seal appears digitally added."
+            reason = "The seal shows insertion artifacts instead of physical ink properties."
+            impact = "Fake certification or official approval bypass."
+
+        # Location heuristic
+        lx, ly = bbox.get("x", 0), bbox.get("y", 0)
+        loc_str = "Center"
+        if ly < 300:
+            loc_str = "Top Right" if lx > 400 else "Top Left"
+        elif ly > 800:
+            loc_str = "Bottom Right" if lx > 400 else "Bottom Left"
+        else:
+            loc_str = "Middle Right" if lx > 400 else "Middle Left"
+            
+        explanations.append({
+            "title": t,
+            "region_id": loc.get("region_id"),
+            "page": loc["page"],
+            "severity": severity,
+            "location": loc_str,
+            "summary": summary,
+            "reason": reason,
+            "impact": impact
+        })
+
+    return {
+        "finding_count": len(findings),
+        "critical_count": critical,
+        "suspicious_count": suspicious,
+        "verify_count": len(findings) - critical - suspicious,
+        "findings": findings,
+        "localization": localization_array,
+        "explanations": explanations,
+        "overall_risk_pct": round(fused_risk * 100, 1),
+        "overall_verdict": final_verdict,
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }
+
+
 
 def run_fusion_agent(
     agents: Dict[str, Dict[str, Any]],
     weights: Optional[Dict[str, float]] = None,
+    localization_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     weights = weights or AGENT_WEIGHTS
 
@@ -325,8 +529,11 @@ def run_fusion_agent(
         majority, minority, agents, disagreements, evidence_ranking, reasoning,
     )
 
+    forensic_dossier = _build_forensic_dossier(agents, final_verdict, fused_risk, localization_data)
+
     return {
         "final_verdict": final_verdict,
+        "verdict": final_verdict,
         "confidence": round(final_confidence, 4),
         "confidence_pct": round(final_confidence * 100, 1),
         "risk_score": round(fused_risk, 4),
@@ -334,10 +541,22 @@ def run_fusion_agent(
         "risk_level": risk_level,
         "reasoning": reasoning,
         "weighted_scores": weighted_scores,
+        "detector_contributions": [
+            {
+                "detector_name": aid,
+                "contribution": weighted_scores.get(aid, 0),
+                "confidence": float(agents.get(aid, {}).get("confidence", 0)),
+                "risk_score": float(agents.get(aid, {}).get("risk_score", 0)),
+                "verdict": agents.get(aid, {}).get("verdict"),
+                "technical_reason": (agents.get(aid, {}).get("explanation") or "")[:300],
+            }
+            for aid in agents
+        ],
         "majority_vote": majority,
         "minority_opinion": minority,
         "confidence_distribution": confidence_distribution,
         "evidence_ranking": evidence_ranking,
         "disagreements": disagreements,
         "report": report,
+        "forensic_dossier": forensic_dossier,
     }

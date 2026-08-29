@@ -1,5 +1,21 @@
 from pathlib import Path
 
+import logging
+
+logger = logging.getLogger("ai_forge.document.risk")
+
+
+def _safe_call(name, fn, fallback):
+    try:
+        value = fn()
+        return fallback if value is None else value
+    except Exception as exc:
+        logger.warning("Detector %s failed; continuing analysis | %s", name, exc)
+        out = dict(fallback) if isinstance(fallback, dict) else fallback
+        if isinstance(out, dict):
+            out = {**out, "available": False, "error": str(exc)[:400]}
+        return out
+
 
 from backend.analysis.image_forensics import (
     analyze_image
@@ -89,11 +105,10 @@ def safe_bool(
 # ==========================================
 
 def analyze_document_risk(
-
     image_path,
-
-    analysis_dir
-
+    analysis_dir,
+    ocr_result=None,
+    fast_forensics: bool = False,
 ):
 
     image_path = Path(
@@ -127,26 +142,29 @@ def analyze_document_risk(
     )
 
 
-    print()
-
-    print(
-
-        "========== RISK ENGINE START =========="
-
-    )
-
+    logger.debug("Risk engine start | %s fast=%s", image_path, fast_forensics)
 
     # ======================================
     # 1. IMAGE FORENSICS
     # ======================================
 
-    forensic = analyze_image(
-
-        str(image_path),
-
-        str(analysis_dir)
-
-    )
+    if fast_forensics:
+        metadata_only = _safe_call("metadata", lambda: analyze_metadata(str(image_path)) or {}, {})
+        forensic = {
+            "signals": {
+                "ela_score": float(metadata_only.get("suspicion_score") or 0) * 0.5,
+                "edge_density": 0.0,
+                "wavelet_score": 0.0,
+                "metadata_suspicious": bool(metadata_only.get("suspicious")),
+            },
+            "metadata": metadata_only,
+        }
+    else:
+        forensic = _safe_call(
+            "image_forensics",
+            lambda: analyze_image(str(image_path), str(analysis_dir)),
+            {"signals": {}},
+        )
 
 
     signals = forensic.get(
@@ -188,13 +206,14 @@ def analyze_document_risk(
     # 2. COPY MOVE
     # ======================================
 
-    copy_move = detect_copy_move(
-
-        str(image_path),
-
-        analysis_dir
-
-    )
+    if fast_forensics:
+        copy_move = {"copy_move_detected": False, "detected": False, "score": 0.0}
+    else:
+        copy_move = _safe_call(
+            "copy_move",
+            lambda: detect_copy_move(str(image_path), analysis_dir),
+            {"copy_move_detected": False, "detected": False, "score": 0.0},
+        )
 
 
     copy_move_detected = safe_bool(
@@ -250,10 +269,10 @@ def analyze_document_risk(
     # 3. METADATA
     # ======================================
 
-    metadata = analyze_metadata(
-
-        str(image_path)
-
+    metadata = _safe_call(
+        "metadata",
+        lambda: analyze_metadata(str(image_path)) or {},
+        {},
     )
 
 
@@ -285,57 +304,52 @@ def analyze_document_risk(
     # 4. NOISE
     # ======================================
 
-    noise = analyze_noise(
-
-        str(image_path)
-
-    )
-
-
-    noise_inconsistency = safe_float(
-
-        noise.get(
-
-            "noise_inconsistency",
-
-            0
-
+    if fast_forensics:
+        noise = {"noise_inconsistency": 0.0}
+        noise_inconsistency = 0.0
+        noise_score = 0.0
+    else:
+        noise = _safe_call(
+            "noise",
+            lambda: analyze_noise(str(image_path)) or {},
+            {"noise_inconsistency": 0.0},
         )
-
-    )
-
-
-    # Convert inconsistency into
-    # normalized suspicion score.
-
-    noise_score = min(
-
-        noise_inconsistency / 0.50,
-
-        1.0
-
-    )
+        noise_inconsistency = safe_float(
+            noise.get(
+                "noise_inconsistency",
+                0,
+            ),
+        )
+        noise_score = min(
+            noise_inconsistency / 0.50,
+            1.0,
+        )
 
 
     # ======================================
     # 5. TEXT LAYOUT
     # ======================================
 
-    layout = analyze_text_layout(
-
-        str(image_path)
-
-    )
+    if ocr_result and ocr_result.get("layout"):
+        layout = ocr_result["layout"]
+    elif ocr_result and ocr_result.get("layout_data"):
+        layout = ocr_result["layout_data"]
+    else:
+        layout = _safe_call(
+            "text_layout",
+            lambda: analyze_text_layout(str(image_path)) or {},
+            {},
+        )
 
 
     # ======================================
     # 6. FONT
     # ======================================
 
-    font = analyze_font_consistency(
-
-        str(image_path)
-
+    font = _safe_call(
+        "font",
+        lambda: analyze_font_consistency(str(image_path)) or {},
+        {"suspicious_words": [], "total_words": 0},
     )
 
 
@@ -390,10 +404,10 @@ def analyze_document_risk(
     # 7. SPACING
     # ======================================
 
-    spacing = analyze_spacing(
-
-        str(image_path)
-
+    spacing = _safe_call(
+        "spacing",
+        lambda: analyze_spacing(str(image_path)) or {},
+        {"risk_score": 0},
     )
 
 
@@ -423,10 +437,10 @@ def analyze_document_risk(
     # 8. REGION
     # ======================================
 
-    regions = analyze_region_anomaly(
-
-        str(image_path)
-
+    regions = _safe_call(
+        "region_anomaly",
+        lambda: analyze_region_anomaly(str(image_path)) or {},
+        {"overall_score": 0, "high_risk_regions": []},
     )
 
 
@@ -801,6 +815,27 @@ def analyze_document_risk(
 
     ]
 
+    # Module consensus — never claim "NO SIGNIFICANT ANOMALY" when detectors disagree
+    module_hits = []
+    if ela >= 0.28:
+        module_hits.append("ela")
+    if copy_move_detected or copy_move_score >= 0.28:
+        module_hits.append("copy_move")
+    if metadata_suspicious or metadata_score >= 0.25:
+        module_hits.append("metadata")
+    if font_score >= 0.20:
+        module_hits.append("font")
+    if spacing_score >= 0.20:
+        module_hits.append("spacing")
+
+    suspicious_evidence_count = len(evidence) if isinstance(evidence, list) else 0
+    if suspicious_evidence_count >= 5 or len(module_hits) >= 5:
+        risk_score = max(float(risk_score), 72.0)
+    elif suspicious_evidence_count >= 3 or len(module_hits) >= 3:
+        risk_score = max(float(risk_score), 48.0)
+    elif suspicious_evidence_count >= 2 or len(module_hits) >= 2:
+        risk_score = max(float(risk_score), 38.0)
+
 
     # ======================================
     # FINAL VERDICT
@@ -868,15 +903,24 @@ def analyze_document_risk(
 
     else:
 
-        verdict = "NO SIGNIFICANT ANOMALY"
+        # Only claim no anomaly when NO modules flagged
+        if suspicious_evidence_count >= 2 or len(module_hits) >= 2:
+            risk_score = max(float(risk_score), 38.0)
+            verdict = "MEDIUM RISK"
+            recommendation = (
+                "Multiple forensic modules flagged anomalies. "
+                "Do not treat this document as clean without review."
+            )
+        else:
+            verdict = "NO SIGNIFICANT ANOMALY"
 
-        recommendation = (
+            recommendation = (
 
-            "No significant forensic evidence "
+                "No significant forensic evidence "
 
-            "of manipulation was detected."
+                "of manipulation was detected."
 
-        )
+            )
 
 
     # ======================================
@@ -996,65 +1040,15 @@ def analyze_document_risk(
     # DEBUG
     # ======================================
 
-    print(
-
-        "Risk Score:",
-
-        risk_score
-
+    logger.debug(
+        "Risk result | score=%.3f confidence=%.3f coverage=%.3f verdict=%s modules=%d findings=%d",
+        risk_score,
+        confidence,
+        evidence_coverage,
+        verdict,
+        len(evidence),
+        len(fusion["findings"]),
     )
-
-    print(
-
-        "Confidence:",
-
-        confidence
-
-    )
-
-    print(
-
-        "Evidence Coverage:",
-
-        evidence_coverage
-
-    )
-
-    print(
-
-        "Verdict:",
-
-        verdict
-
-    )
-
-    print(
-
-        "Evidence Modules:",
-
-        len(evidence)
-
-    )
-
-    print(
-
-        "Findings:",
-
-        len(
-
-            fusion["findings"]
-
-        )
-
-    )
-
-    print(
-
-        "======================================"
-
-    )
-
-    print()
 
     from backend.document_analysis.evidence_fusion import make_json_serializable
 

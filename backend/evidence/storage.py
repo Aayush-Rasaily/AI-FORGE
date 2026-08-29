@@ -25,6 +25,8 @@ from backend.evidence.paths import (
     get_analysis_dir,
     get_metadata_path,
 )
+from backend.security.config import EVIDENCE_ENCRYPTION_ENABLED
+from backend.security.encryption import decrypt_file, encrypt_file
 from backend.forensics.evidence_hash import compute_evidence_hashes
 
 logger = logging.getLogger("ai_forge.evidence.storage")
@@ -64,13 +66,30 @@ def archive_upload(
     working_dest = WORKING_DIR / f"{evidence_id}{ext}"
 
     if not original_dest.exists():
-        shutil.copy2(legacy_path, original_dest)
-        _set_readonly(original_dest)
+        if EVIDENCE_ENCRYPTION_ENABLED:
+            enc_dest = ORIGINAL_DIR / f"{evidence_id}{ext}.enc"
+            if encrypt_file(legacy_path, enc_dest):
+                original_dest = enc_dest
+                metadata_encrypted = True
+            else:
+                shutil.copy2(legacy_path, original_dest)
+                metadata_encrypted = False
+        else:
+            shutil.copy2(legacy_path, original_dest)
+            metadata_encrypted = False
+        if not str(original_dest).endswith(".enc"):
+            _set_readonly(original_dest)
+    else:
+        metadata_encrypted = str(original_dest).endswith(".enc")
 
     if not working_dest.exists() or working_dest.stat().st_size == 0:
-        shutil.copy2(original_dest, working_dest)
+        if metadata_encrypted:
+            decrypt_file(original_dest, working_dest)
+        else:
+            shutil.copy2(original_dest, working_dest)
 
-    hashes = compute_evidence_hashes(original_dest)
+    hash_source = working_dest if working_dest.exists() else legacy_path
+    hashes = compute_evidence_hashes(hash_source)
 
     metadata = {
         "evidence_id": evidence_id,
@@ -85,7 +104,8 @@ def archive_upload(
         "legacy_path": str(legacy_path.resolve()),
         "integrity": {
             "original_untouched": True,
-            "hash_source": "original",
+            "hash_source": "working_decrypted" if metadata_encrypted else "original",
+            "encrypted_at_rest": metadata_encrypted,
         },
     }
     _write_json(get_metadata_path(evidence_id), metadata)

@@ -44,7 +44,7 @@ class ModuleTimer:
             name = rec["module"]
             elapsed = rec["elapsed"]
             summary[name] = round(elapsed, 3)
-            flag = " ⚠ SLOW" if elapsed >= highlight_threshold else ""
+            flag = " [SLOW]" if elapsed >= highlight_threshold else ""
             lines.append(f"{name:.<20} {elapsed:.2f}s{flag}")
 
         total = self.total()
@@ -54,7 +54,10 @@ class ModuleTimer:
 
         message = "\n".join(lines)
         logger.info(message)
-        print(message)
+        try:
+            print(message)
+        except UnicodeEncodeError:
+            print(message.encode("ascii", "replace").decode("ascii"))
         return summary
 
 

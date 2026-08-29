@@ -19,10 +19,13 @@ logger = logging.getLogger("ai_forge.pipeline.reports")
 # Canonical filenames inside analysis/{evidence_id}/
 CANONICAL_REPORTS = {
     "report.pdf": ("pdf", "full"),
+    "executive_summary.pdf": ("pdf", "executive"),
     "report_executive.pdf": ("pdf", "executive"),
     "executive.pdf": ("pdf", "executive"),
+    "court_report.pdf": ("pdf", "court"),
     "report_court.pdf": ("pdf", "court"),
     "court.pdf": ("pdf", "court"),
+    "technical_appendix.pdf": ("pdf", "technical"),
     "report_technical.pdf": ("pdf", "technical"),
     "technical.pdf": ("pdf", "technical"),
     "report.json": ("json", "full"),
@@ -84,6 +87,13 @@ def generate_all_reports(
 
     def _gen(canonical_name: str, fmt: str, template: str) -> tuple:
         start = __import__("time").perf_counter()
+        dest = analysis_dir / canonical_name
+        # Fast path: reuse cached report artifacts — never re-run forensic models
+        if dest.is_file() and dest.stat().st_size > 500:
+            elapsed = (__import__("time").perf_counter() - start) * 1000
+            log_module(evidence_id, f"report_{template}_{fmt}", "cached", duration_ms=elapsed)
+            return canonical_name, str(dest)
+
         # Full PDF writes directly into analysis_dir for reliability
         if fmt == "pdf" and template == "full" and canonical_name == "report.pdf":
             from backend.reports.pdf_exporter import ensure_report_pdf
@@ -120,11 +130,14 @@ def generate_all_reports(
                 logger.error("[%s] Report %s failed: %s", evidence_id, name, exc)
                 reports_meta["errors"][name] = str(exc)
 
-    # Copy aliases (executive.pdf, court.pdf, technical.pdf)
+    # Copy compatibility aliases for existing consumers.
     aliases = {
-        "executive.pdf": "report_executive.pdf",
-        "court.pdf": "report_court.pdf",
-        "technical.pdf": "report_technical.pdf",
+        "report_executive.pdf": "executive_summary.pdf",
+        "executive.pdf": "executive_summary.pdf",
+        "report_court.pdf": "court_report.pdf",
+        "court.pdf": "court_report.pdf",
+        "report_technical.pdf": "technical_appendix.pdf",
+        "technical.pdf": "technical_appendix.pdf",
     }
     for alias, source in aliases.items():
         src = analysis_dir / source

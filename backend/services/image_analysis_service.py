@@ -29,6 +29,21 @@ from backend.utils.timing import ModuleTimer, format_timing_dashboard
 logger = logging.getLogger("ai_forge.image_service")
 
 
+def _ensure_signature_analysis(
+    image_path: Path,
+    analysis_dir: Path,
+    result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Run the existing signature detector once for every image analysis."""
+    signature = result.get("signature_analysis")
+    if not isinstance(signature, dict):
+        from backend.services.signature_service import run_signature_analysis
+
+        signature = run_signature_analysis(image_path, analysis_dir)
+        result["signature_analysis"] = signature
+    return signature
+
+
 def _attach_artifacts(result: Dict[str, Any], evidence_id: str) -> Dict[str, Any]:
     """Always include API artifact URLs in the response."""
     result["artifacts"] = artifact_api_urls(evidence_id)
@@ -62,6 +77,7 @@ def run_image_analysis(
         redis_cached = redis.get(rkey)
         if redis_cached and redis_cached.get("analysis"):
             analysis = redis_cached["analysis"]
+            _ensure_signature_analysis(image_path, analysis_dir, analysis)
             tampering = redis_cached.get("tampering", {})
             timing = redis_cached.get("timing", {})
             completion = ensure_pipeline_complete(
@@ -76,6 +92,7 @@ def run_image_analysis(
         db_cached = get_analysis_by_hash(file_hash, "image")
         if db_cached:
             analysis = db_cached["analysis"]
+            _ensure_signature_analysis(image_path, analysis_dir, analysis)
             tampering = db_cached["tampering"]
             timing = db_cached.get("execution_times", {})
             completion = ensure_pipeline_complete(
@@ -91,6 +108,7 @@ def run_image_analysis(
         bundle = load_analysis_bundle(analysis_dir)
         if bundle and bundle.get("analysis"):
             analysis = bundle["analysis"]
+            _ensure_signature_analysis(image_path, analysis_dir, analysis)
             tampering = bundle.get("tampering") or _extract_tampering(analysis)
             timing = bundle.get("timing", {})
             completion = ensure_pipeline_complete(
@@ -104,6 +122,7 @@ def run_image_analysis(
         cached = cache.load()
         if cached and cached.get("analysis"):
             analysis = cached["analysis"]
+            _ensure_signature_analysis(image_path, analysis_dir, analysis)
             tampering = cached.get("tampering") or _extract_tampering(analysis)
             timing = cached.get("timing", {})
             completion = ensure_pipeline_complete(
@@ -139,6 +158,7 @@ def run_image_analysis(
             result = build_quick_verdict(quick)
             result["file_hash"] = file_hash
             result["evidence_id"] = evidence_id
+            _ensure_signature_analysis(working_path, analysis_dir, result)
             tampering = _minimal_tampering(quick)
             timing = {**timer.log_summary(), **all_timing}
             _persist(evidence_id, file_hash, original_path, analysis_dir, result, tampering, timing, deep_scan=False, redis_key=rkey)
@@ -161,6 +181,7 @@ def run_image_analysis(
             result["file_hash"] = file_hash
             result["evidence_id"] = evidence_id
             result["quick_scan"] = {"risk_score": quick["risk_score"], "signals": quick["signals"]}
+            _ensure_signature_analysis(working_path, analysis_dir, result)
             if progress:
                 progress.emit("deep_scan", "completed")
 
@@ -174,6 +195,11 @@ def run_image_analysis(
             evidence_id, original_path, analysis_dir, result, tampering, timing, progress=progress
         )
         on_analysis_complete(evidence_id, result, media_type="image", execution_times=timing)
+
+        if DEFER_EXPLAINABILITY:
+            schedule_background_explainability(
+                evidence_id, original_path, analysis_dir, result, tampering, rkey
+            )
 
         if progress:
             progress.complete({"scan_mode": "deep"})
@@ -192,6 +218,9 @@ def schedule_background_explainability(
     from backend.utils.worker_pool import get_worker_pool
 
     def _run():
+        if result.get("explainability") and result.get("explainability", {}).get("success"):
+            logger.info("[%s] Explainability already present — skipping background run", evidence_id)
+            return
         try:
             from backend.analysis.explainability.engine import run_explainability
             signals = result.get("signals") or {}
@@ -208,51 +237,34 @@ def schedule_background_explainability(
                 },
                 tampering_result=tampering,
             )
-            result["explainability"] = explain
-            result["explainability_pending"] = False
+            working = dict(result)
+            working["explainability"] = explain
+            working["explainability_pending"] = False
             from backend.utils.analysis_persistence import save_analysis_bundle
             cached = AnalysisCache(evidence_id, analysis_dir).load() or {}
             save_analysis_bundle(
                 analysis_dir,
-                analysis=result,
+                analysis=working,
                 tampering=cached.get("tampering", tampering),
-                timing=cached.get("timing", result.get("timing", {})),
-                risk=result.get("risk_fusion"),
+                timing=cached.get("timing", working.get("timing", {})),
+                risk=working.get("risk_fusion"),
             )
             cache = AnalysisCache(evidence_id, analysis_dir)
             cache.save({
-                "analysis": result,
+                "analysis": working,
                 "tampering": cached.get("tampering", tampering),
-                "timing": cached.get("timing", result.get("timing", {})),
+                "timing": cached.get("timing", working.get("timing", {})),
             })
             get_redis_cache().set(redis_key, {
-                "analysis": result,
+                "analysis": working,
                 "tampering": tampering,
-                "timing": result.get("timing", {}),
+                "timing": working.get("timing", {}),
             })
             logger.info("[%s] Background explainability complete", evidence_id)
         except Exception as exc:
             logger.warning("[%s] Background explainability failed: %s", evidence_id, exc)
 
     get_worker_pool().submit(_run)
-
-
-def schedule_background_artifacts(
-    evidence_id: str,
-    image_path: Path,
-    analysis_dir: Path,
-    tampering: Dict[str, Any],
-) -> None:
-    from backend.utils.worker_pool import get_worker_pool
-    logger.info("[%s] Scheduling background artifact generation", evidence_id)
-    get_worker_pool().submit(
-        generate_all_forensic_artifacts,
-        evidence_id,
-        image_path,
-        analysis_dir,
-        tampering,
-    )
-
 
 def _persist(
     evidence_id: str,
@@ -263,8 +275,8 @@ def _persist(
     tampering: Dict[str, Any],
     timing: Dict[str, float],
     deep_scan: bool,
-    redis_key: Optional[str] = None,
-) -> None:
+    redis_key: Optional[str] = None) -> None:
+    """Persist the analysis result to the database and cache."""
     metadata = result.get("metadata_forensics") or {}
     risk = result.get("risk_fusion") or result.get("ensemble")
 

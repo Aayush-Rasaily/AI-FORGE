@@ -3,19 +3,26 @@ Jury API Routes — multi-agent forensic reasoning endpoints.
 """
 
 import logging
+import asyncio
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.agents.jury import run_jury_analysis
+from backend.evidence.paths import get_analysis_dir
+from backend.services.dossier_jury_service import run_dossier_jury
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/jury", tags=["jury"])
 
 AGENT_IDS = [
-    "vision", "metadata", "ocr", "video", "gan", "deepfake", "signature",
+    "expert_01",
+    "expert_02",
+    "expert_03",
+    "expert_04",
+    "expert_05",
+    "expert_06",
 ]
 
 
@@ -32,47 +39,24 @@ class JuryAnalyzeRequest(BaseModel):
 @router.post("/analyze")
 async def jury_analyze(request: JuryAnalyzeRequest):
     """
-    Run 7-agent jury analysis on pre-computed forensic outputs.
-
-    Agents: Vision, Metadata, OCR, Video, GAN, Deepfake, Signature.
-    Returns per-agent votes, majority verdict, minority opinion, and fused report.
+    Evaluate the existing forensic dossier without rerunning detectors.
     """
-    has_input = any([
-        request.analysis,
-        request.tampering,
-        request.document_analysis,
-        request.video_analysis,
-        request.signature_result,
-    ])
-    if not has_input:
+    if not request.evidence_id:
         raise HTTPException(
             status_code=400,
-            detail="At least one forensic analysis payload must be provided.",
+            detail="evidence_id is required; jury analysis uses forensic_dossier.json.",
         )
 
+    analysis_dir = get_analysis_dir(request.evidence_id, create=False)
     try:
-        result = run_jury_analysis(
-            analysis=request.analysis,
-            tampering=request.tampering,
-            document_analysis=request.document_analysis,
-            video_analysis=request.video_analysis,
-            signature_result=request.signature_result,
-            evidence_id=request.evidence_id,
-            filename=request.filename,
+        result = await asyncio.to_thread(
+            run_dossier_jury,
+            request.evidence_id,
+            analysis_dir,
         )
-        if request.evidence_id:
-            try:
-                from backend.pipeline.report_manager import persist_analysis_payload, generate_reports
-
-                persist_analysis_payload(request.evidence_id, result, kind="jury")
-                generate_reports(request.evidence_id, jury_data=result, background=True)
-                logger.info("jury_report_queued | evidence_id=%s", request.evidence_id)
-            except Exception as report_exc:
-                logger.warning("jury_report_queue_failed | error=%s", report_exc)
-            result["reports_pending"] = True
-            result["report_status"] = "queued"
-            result["evidence_id"] = request.evidence_id
         return result
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Jury analysis failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Jury analysis failed: {exc}") from exc

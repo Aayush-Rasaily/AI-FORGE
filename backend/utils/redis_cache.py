@@ -32,7 +32,12 @@ def _get_redis():
         return _REDIS_CLIENT
     try:
         import redis
-        client = redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=0.5)
+        client = redis.from_url(
+            REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=0.5,
+            socket_timeout=0.5,
+        )
         client.ping()
         _REDIS_CLIENT = client
         _REDIS_AVAILABLE = True

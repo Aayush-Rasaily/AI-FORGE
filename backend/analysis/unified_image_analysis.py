@@ -42,7 +42,7 @@ from backend.tampering.tampering_detector import (
     analyze_tampering
 )
 
-from backend.analysis.parallel_runner import run_parallel_modules
+from backend.analysis.parallel_runner import module_error, module_failed, run_parallel_modules
 from backend.analysis.ensemble_scoring import compute_ensemble_risk
 from backend.analysis.risk_fusion_engine import compute_fusion_risk
 from backend.analysis.ai_generated_detector import detect_ai_generated_image
@@ -285,23 +285,35 @@ def _run_unified_analysis(
         enabled_modules=enabled,
     )
 
-    forensic_result = parallel_results.get("forensics") or {}
-    copy_move_result = parallel_results.get("copy_move") or {}
-    metadata_result = parallel_results.get("metadata") or {}
-    noise_result = parallel_results.get("noise") or {}
-    font_result = parallel_results.get("font") or {}
-    spacing_result = parallel_results.get("spacing") or {}
-    region_result = parallel_results.get("region") or {}
-    tampering_result = parallel_results.get("tampering") or {}
+    failed_modules = {}
+    skipped_modules = {}
+
+    def _module(name: str) -> dict:
+        raw = parallel_results.get(name) or {}
+        if module_failed(raw):
+            failed_modules[name] = module_error(raw)
+            return {}
+        if name not in enabled:
+            skipped_modules[name] = "not_in_profile"
+        return raw if isinstance(raw, dict) else {}
+
+    forensic_result = _module("forensics")
+    copy_move_result = _module("copy_move")
+    metadata_result = _module("metadata")
+    noise_result = _module("noise")
+    font_result = _module("font")
+    spacing_result = _module("spacing")
+    region_result = _module("region")
+    tampering_result = _module("tampering")
 
     # Multi-spectral detector fusion
     spectral_results = {
-        k: parallel_results.get(k) or {}
+        k: _module(k)
         for k in ("rgb", "hsv", "lab", "ycbcr", "frequency", "jpeg_block")
     }
     multispectral_fusion = fuse_detector_results(spectral_results)
 
-    gan_result = parallel_results.get("ai_generation") or parallel_results.get("gan_detection") or {}
+    gan_result = _module("ai_generation") or _module("gan_detection")
     gan_fusion = gan_result.get("fusion") or gan_result
     ai_generation = gan_result if gan_result.get("ai_generated_probability") is not None else {
         "ai_generated_probability": safe_float(gan_fusion.get("ai_generated_score", 0)),
@@ -311,7 +323,7 @@ def _run_unified_analysis(
         "reasoning": gan_fusion.get("reasoning", ""),
         "detectors": gan_result.get("detectors", {}),
     }
-    face_result = parallel_results.get("face_forensics") or {}
+    face_result = _module("face_forensics")
     face_fusion = face_result.get("fusion") or {}
 
     if not tampering_result:
@@ -1101,10 +1113,10 @@ def _run_unified_analysis(
             explainability_result = {"success": False, "error": str(exc)}
 
     if not DEFER_EXPLAINABILITY and explainability_result.get("ai_explanation"):
-        explanation = explainability_result["ai_explanation"].replace("**", "")
+        # Visual explainability supplements cite-only narrative later
+        pass
     elif explainability_result.get("human_readable_report"):
-        report_lines = explainability_result["human_readable_report"].split("\n")
-        explanation = " ".join(report_lines[:6])
+        pass
 
     # ========================================================
     # ARTIFACT PATHS
@@ -1158,6 +1170,20 @@ def _run_unified_analysis(
         "signals": signals,
 
         "findings": findings,
+
+        "forensic_module_status": {
+            name: (
+                "failed" if name in failed_modules
+                else "skipped" if name in skipped_modules
+                else "completed"
+            )
+            for name in (
+                "forensics", "copy_move", "metadata", "noise", "rgb", "hsv", "lab",
+                "ycbcr", "frequency", "jpeg_block", "ai_generation", "face_forensics",
+                "font", "spacing", "region", "tampering",
+            )
+        },
+        "forensic_module_errors": dict(failed_modules),
 
         # ----------------------------------------------------
         # DEDICATED TAMPERING RESULT
@@ -1312,5 +1338,32 @@ def _run_unified_analysis(
 
     if progress:
         progress.emit("fusion", "completed")
+
+    # Production engines: normalize detectors → weighted fusion → cite-only explain
+    try:
+        from backend.engines.orchestrator import enrich_analysis_with_engines
+
+        result.setdefault("forensics", forensic_result)
+        result.setdefault("copy_move", copy_move_result)
+        result.setdefault("noise", noise_result)
+        result.setdefault("metadata", metadata_result)
+        result.setdefault("font_consistency", font_result)
+        result.setdefault("spacing_analysis", spacing_result)
+        result.setdefault("region_anomaly", region_result)
+        result.setdefault("jpeg_block", spectral_results.get("jpeg_block") or {})
+        result.setdefault("frequency", spectral_results.get("frequency") or {})
+        result.setdefault("rgb", spectral_results.get("rgb") or {})
+        result.setdefault("hsv", spectral_results.get("hsv") or {})
+        result.setdefault("lab", spectral_results.get("lab") or {})
+        result.setdefault("ycbcr", spectral_results.get("ycbcr") or {})
+        result["profile"] = profile
+        result = enrich_analysis_with_engines(
+            result,
+            evidence_id=eid,
+            analysis_dir=analysis_dir,
+            run_localization=False,  # localization runs in completion after artifacts
+        )
+    except Exception as engine_exc:
+        print(f"[ENGINES] enrich skipped: {engine_exc}")
 
     return result

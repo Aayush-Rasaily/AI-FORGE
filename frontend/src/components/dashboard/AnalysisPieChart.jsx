@@ -1,51 +1,69 @@
+import { memo, useMemo } from "react";
 import { motion } from "framer-motion";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
+import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { EVIDENCE_COLORS, TOOLTIP_STYLE } from "./chartTheme";
 
-const DATA = [
-  { name: "Image", value: 42, color: "#3b82f6" },
-  { name: "Document", value: 28, color: "#22c55e" },
-  { name: "Signature", value: 18, color: "#a855f7" },
-  { name: "Video", value: 12, color: "#ef4444" },
-];
+const TYPE_LABELS = {
+  image: "Image",
+  document: "Document",
+  signature: "Signature",
+  video: "Video",
+  pdf: "PDF",
+  unknown: "Other",
+};
 
-function AnalysisPieChart() {
+function AnalysisPieChart({ evidenceByType = {}, delay = 0.2 }) {
+  const data = useMemo(() => {
+    const entries = Object.entries(evidenceByType || {});
+    if (!entries.length) {
+      return [
+        { name: "Image", value: 0, color: EVIDENCE_COLORS.image },
+        { name: "Document", value: 0, color: EVIDENCE_COLORS.document },
+      ];
+    }
+    return entries.map(([key, value]) => ({
+      name: TYPE_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1),
+      value: Number(value) || 0,
+      color: EVIDENCE_COLORS[key] || EVIDENCE_COLORS.unknown,
+    }));
+  }, [evidenceByType]);
+
+  const total = data.reduce((s, d) => s + d.value, 0);
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.3 }}
-      className="rounded-2xl border border-[#1F2937] bg-[#111827]/80 p-6 backdrop-blur-xl"
+      transition={{ delay }}
+      className="command-panel h-full rounded-2xl p-5 md:p-6"
     >
-      <h3 className="text-lg font-semibold text-white">Analysis Distribution</h3>
-      <p className="mt-1 text-xs text-slate-500">Evidence types processed this week</p>
-
-      <div className="mt-4 h-64">
+      <div className="mb-2 flex items-start justify-between">
+        <div>
+          <h3 className="font-display text-base font-semibold text-white">Evidence Types</h3>
+          <p className="text-xs text-slate-500">Distribution across intake pipeline</p>
+        </div>
+        <span className="rounded-lg bg-cyan-500/10 px-2 py-1 text-xs font-semibold text-cyan-400">
+          {total} total
+        </span>
+      </div>
+      <div className="h-56 sm:h-64">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
-              data={DATA}
+              data={data}
               cx="50%"
               cy="50%"
-              innerRadius={55}
-              outerRadius={85}
-              paddingAngle={4}
+              innerRadius={52}
+              outerRadius={78}
+              paddingAngle={3}
               dataKey="value"
             >
-              {DATA.map((entry) => (
+              {data.map((entry) => (
                 <Cell key={entry.name} fill={entry.color} stroke="transparent" />
               ))}
             </Pie>
-            <Tooltip
-              contentStyle={{
-                background: "#111827",
-                border: "1px solid #1F2937",
-                borderRadius: "12px",
-                color: "#f8fafc",
-              }}
-            />
-            <Legend
-              wrapperStyle={{ fontSize: "12px", color: "#94a3b8" }}
-            />
+            <Tooltip contentStyle={TOOLTIP_STYLE} />
+            <Legend wrapperStyle={{ fontSize: "11px", color: "#94a3b8" }} />
           </PieChart>
         </ResponsiveContainer>
       </div>
@@ -53,4 +71,4 @@ function AnalysisPieChart() {
   );
 }
 
-export default AnalysisPieChart;
+export default memo(AnalysisPieChart);

@@ -33,14 +33,52 @@ const SEVERITY_STYLES = {
   low: "border-slate-600/40 bg-slate-700/30 text-slate-400",
 };
 
+/**
+ * Convert any bbox format to CSS positioning style.
+ * Handles:
+ *   - canonical dict {x, y, width, height}
+ *   - flat list [x1, y1, x2, y2] or [x, y, w, h]
+ *   - polygon-point list [[x,y],[x,y],...]
+ */
 function bboxToStyle(bbox, imgW, imgH) {
-  if (!bbox || !Array.isArray(bbox) || bbox.length < 2 || !imgW || !imgH) return null;
-  const xs = bbox.map((p) => (Array.isArray(p) ? p[0] : 0));
-  const ys = bbox.map((p) => (Array.isArray(p) ? p[1] : 0));
-  const x1 = Math.min(...xs);
-  const y1 = Math.min(...ys);
-  const x2 = Math.max(...xs);
-  const y2 = Math.max(...ys);
+  if (!bbox || !imgW || !imgH) return null;
+
+  let x1, y1, x2, y2;
+
+  // Canonical dict format {x, y, width, height} — preferred
+  if (bbox && typeof bbox === "object" && !Array.isArray(bbox)) {
+    x1 = Number(bbox.x ?? 0);
+    y1 = Number(bbox.y ?? 0);
+    const w = Number(bbox.width ?? bbox.w ?? 0);
+    const h = Number(bbox.height ?? bbox.h ?? 0);
+    x2 = x1 + w;
+    y2 = y1 + h;
+  } else if (Array.isArray(bbox) && bbox.length >= 2) {
+    if (Array.isArray(bbox[0])) {
+      // Polygon-point list [[x,y],[x,y],...]
+      const xs = bbox.map((p) => (Array.isArray(p) ? p[0] : 0));
+      const ys = bbox.map((p) => (Array.isArray(p) ? p[1] : 0));
+      x1 = Math.min(...xs);
+      y1 = Math.min(...ys);
+      x2 = Math.max(...xs);
+      y2 = Math.max(...ys);
+    } else if (bbox.length >= 4) {
+      // Flat xyxy or xywh list [x1, y1, x2, y2]
+      [x1, y1, x2, y2] = bbox.map(Number);
+      // Heuristic: if x2 <= x1 or y2 <= y1, treat as xywh
+      if (x2 <= x1 || y2 <= y1) {
+        x2 = x1 + x2;
+        y2 = y1 + y2;
+      }
+    } else {
+      return null;
+    }
+  } else {
+    return null;
+  }
+
+  if (!isFinite(x1) || !isFinite(y1) || !isFinite(x2) || !isFinite(y2)) return null;
+
   return {
     left: `${(x1 / imgW) * 100}%`,
     top: `${(y1 / imgH) * 100}%`,
@@ -48,6 +86,7 @@ function bboxToStyle(bbox, imgW, imgH) {
     height: `${((y2 - y1) / imgH) * 100}%`,
   };
 }
+
 
 function IssueCard({ issue, selected, onClick }) {
   const meta = ISSUE_META[issue.type] || { icon: AlertTriangle, label: issue.type, color: "#94a3b8" };

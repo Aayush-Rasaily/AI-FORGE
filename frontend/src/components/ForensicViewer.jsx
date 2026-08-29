@@ -11,7 +11,8 @@ import {
   Download,
   ImageOff,
 } from "lucide-react";
-import { getArtifactUrl } from "../services/api";
+import { getArtifactUrl, apiFetch } from "../services/api";
+import { isBackendGateOnline } from "../services/connectivityGate";
 
 /**
  * Interactive forensic viewer — zoom, pan, compare, split slider, opacity overlay.
@@ -88,9 +89,9 @@ function ForensicViewer({
 
   const handleDownload = async () => {
     const src = orig || overlay;
-    if (!src) return;
+    if (!src || !isBackendGateOnline()) return;
     try {
-      const res = await fetch(src);
+      const res = await apiFetch(src);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");

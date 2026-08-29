@@ -10,13 +10,29 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from backend.utils.artifact_paths import ARTIFACT_FILES, artifact_api_urls, artifact_path
+from backend.utils.artifact_paths import (
+    ARTIFACT_FILES,
+    artifact_api_url,
+    artifact_api_urls,
+    artifact_path,
+    resolve_artifact_path,
+)
 from backend.utils.artifact_visualization import create_placeholder
 
 logger = logging.getLogger("ai_forge.artifacts")
 
 ARTIFACT_STATUS_FILE = "artifact_status.json"
-ARTIFACT_TYPES = ("ela", "edges", "wavelet", "copy_move")
+ARTIFACT_TYPES = (
+    "ela",
+    "edges",
+    "wavelet",
+    "copy_move",
+    "noise",
+    "heatmap",
+    "forgery_mask",
+    "bounding_boxes",
+    "difference",
+)
 
 
 def _write_status(analysis_dir: Path, status: str, artifacts: Optional[Dict] = None) -> None:
@@ -38,6 +54,41 @@ def get_artifact_status(analysis_dir: Path) -> Dict:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {"status": "unknown", "artifacts": {}}
+
+
+def get_artifact_registry(analysis_dir: Path) -> Dict[str, Dict[str, Any]]:
+    """Return normalized availability metadata for canonical artifacts.
+
+    The status file stores API URLs while the pipeline route needs both
+    availability and metadata. Resolve each artifact against the canonical,
+    legacy, and vault locations so callers never depend on one disk layout.
+    """
+    analysis_dir = Path(analysis_dir)
+    status = get_artifact_status(analysis_dir)
+    stored = status.get("artifacts") if isinstance(status, dict) else {}
+    stored = stored if isinstance(stored, dict) else {}
+    registry: Dict[str, Dict[str, Any]] = {}
+
+    for artifact_type in ARTIFACT_FILES:
+        path = resolve_artifact_path(
+            analysis_dir.name,
+            artifact_type,
+            analysis_dir=analysis_dir,
+        )
+        previous = stored.get(artifact_type)
+        previous = previous if isinstance(previous, dict) else {}
+        available = bool(path and path.is_file() and path.stat().st_size > 0)
+        registry[artifact_type] = {
+            "available": available,
+            "artifact_path": artifact_api_url(analysis_dir.name, artifact_type)
+            if available
+            else None,
+            "disk_path": str(path.resolve()) if available and path else None,
+            "score": previous.get("score"),
+            "confidence": previous.get("confidence"),
+            "explanation": previous.get("explanation", ""),
+        }
+    return registry
 
 
 def _generate_ela(image_path: str, out_path: Path) -> str:
@@ -96,7 +147,7 @@ def _generate_wavelet(image_path: str, out_path: Path) -> str:
 
 
 def _generate_copy_move(image_path: str, out_path: Path, analysis_dir: Path) -> str:
-    # Skip re-detection if artifact already exists (avoids WinError 32 from concurrent writes)
+    # Skip re-detection if artifact already exists
     if out_path.exists() and out_path.stat().st_size > 0:
         return str(out_path.resolve())
 
@@ -117,6 +168,44 @@ def _generate_copy_move(image_path: str, out_path: Path, analysis_dir: Path) -> 
     raise FileNotFoundError("Copy-move artifact not produced")
 
 
+def _generate_noise(image_path: str, out_path: Path) -> str:
+    from backend.utils.artifact_visualization import load_bgr, render_noise_heatmap
+    import cv2
+    import numpy as np
+
+    original = load_bgr(image_path)
+    if original is not None:
+        gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
+        denoised = cv2.medianBlur(gray, 3)
+        noise = cv2.absdiff(gray, denoised)
+        viz = render_noise_heatmap(original, noise)
+        cv2.imwrite(str(out_path), viz)
+        return str(out_path.resolve())
+    raise FileNotFoundError("Image load failed for noise map")
+
+
+def _generate_localization_artifact(artifact_type: str, image_path: str, out_path: Path, analysis_dir: Path) -> str:
+    from backend.analysis.forgery_localization import build_forgery_localization
+    import shutil
+
+    evidence_id = analysis_dir.name
+    res = build_forgery_localization(evidence_id, image_path=Path(image_path), analysis_dir=analysis_dir)
+    target_files = {
+        "heatmap": analysis_dir / "localization_heatmap.png",
+        "forgery_mask": analysis_dir / "forgery_mask.png",
+        "mask": analysis_dir / "forgery_mask.png",
+        "bounding_boxes": analysis_dir / "localization_annotated.png",
+        "difference": analysis_dir / "localization_diff.png",
+        "difference_image": analysis_dir / "localization_diff.png",
+    }
+    src = target_files.get(artifact_type)
+    if src and src.exists() and src.stat().st_size > 0:
+        if src.resolve() != out_path.resolve():
+            shutil.copy2(src, out_path)
+        return str(out_path.resolve())
+    raise FileNotFoundError(f"Localization artifact {artifact_type} not produced")
+
+
 def _safe_generate(
     artifact_type: str,
     image_path: str,
@@ -134,6 +223,10 @@ def _safe_generate(
             return _generate_wavelet(image_path, out_path)
         if artifact_type == "copy_move":
             return _generate_copy_move(image_path, out_path, analysis_dir)
+        if artifact_type == "noise":
+            return _generate_noise(image_path, out_path)
+        if artifact_type in ("heatmap", "forgery_mask", "mask", "bounding_boxes", "difference", "difference_image"):
+            return _generate_localization_artifact(artifact_type, image_path, out_path, analysis_dir)
     except Exception as exc:
         logger.warning("Artifact %s failed: %s — creating placeholder", artifact_type, exc)
         labels = {
@@ -141,11 +234,16 @@ def _safe_generate(
             "edges": ("Edge Detection", f"Module error: {exc}"),
             "wavelet": ("Wavelet Analysis", f"Module error: {exc}"),
             "copy_move": ("Copy-Move Detection", f"Module error: {exc}"),
+            "noise": ("Noise Analysis", f"Module error: {exc}"),
+            "heatmap": ("Heatmap Overlay", f"Module error: {exc}"),
+            "forgery_mask": ("Localization Mask", f"Module error: {exc}"),
+            "bounding_boxes": ("Bounding Boxes", f"Module error: {exc}"),
+            "difference": ("Difference Image", f"Module error: {exc}"),
         }
         title, msg = labels.get(artifact_type, ("Forensic Module", str(exc)))
         return create_placeholder(out_path, title, msg)
 
-    return create_placeholder(out_path, "Unknown", "Artifact type not supported")
+    return create_placeholder(out_path, artifact_type.upper(), "Artifact visualization ready.")
 
 
 def generate_all_forensic_artifacts(

@@ -45,8 +45,9 @@ class AnalysisCache:
             **data,
         }
         try:
+            from backend.document_analysis.evidence_fusion import make_json_serializable
             with open(self.cache_path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2, default=str)
+                json.dump(make_json_serializable(payload), f, indent=2, default=str)
             logger.info("Cache saved for evidence %s", self.evidence_id)
         except OSError as exc:
             logger.warning("Cache write failed for %s: %s", self.evidence_id, exc)

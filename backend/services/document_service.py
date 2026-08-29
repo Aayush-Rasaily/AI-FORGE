@@ -11,7 +11,7 @@ import logging
 import os
 import zipfile
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -26,15 +26,15 @@ from backend.ingestion.pdf_processor import pdf_to_images, get_text_pages, get_e
 from backend.utils.errors import DocumentAnalysisError
 from backend.utils.file_hash import compute_file_hash
 from backend.utils.image_utils import is_document_file, validate_path
-from backend.utils.performance_config import PDF_PARALLEL_PAGES
+from backend.utils.performance_config import DOC_FAST_FORENSICS, DOC_SLA_PAGE_CAP
 from backend.utils.progress import ProgressTracker
 from backend.utils.redis_cache import cache_key, get_redis_cache
 from backend.utils.timing import ModuleTimer
+from backend.utils.worker_pool import get_worker_pool
 
 logger = logging.getLogger("ai_forge.document")
 
 DOCX_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-MAX_PARALLEL_PAGES = PDF_PARALLEL_PAGES
 
 
 def analyze_document(
@@ -54,11 +54,7 @@ def analyze_document(
     """
     path = validate_path(Path(document_path))
     suffix = path.suffix.lower()
-
-    print("Evidence:", evidence_id or path.stem)
-    print("Resolved Path:", path)
-    print("Exists:", os.path.exists(path))
-    print("Suffix:", suffix)
+    logger.info("Document analysis | evidence=%s path=%s suffix=%s", evidence_id or path.stem, path, suffix)
 
     if not is_document_file(path):
         raise DocumentAnalysisError(
@@ -134,6 +130,10 @@ def _analyze_pdf(
         raise DocumentAnalysisError(
             "No valid page images were generated from PDF.",
         )
+
+    if DOC_SLA_PAGE_CAP > 0 and len(validated_pages) > DOC_SLA_PAGE_CAP:
+        logger.info("Capping PDF pages to %d for SLA tier (total %d)", DOC_SLA_PAGE_CAP, len(validated_pages))
+        validated_pages = validated_pages[:DOC_SLA_PAGE_CAP]
 
     text_pages_list = get_text_pages(str(output_dir), str(pdf_path))
     if text_pages_list:
@@ -280,20 +280,27 @@ def _process_single_page(
     else:
         ocr_result = {"text": "", "word_count": 0, "skipped": True, "reason": "no_text_detected"}
 
-    risk_result = analyze_document_risk(image_path, str(page_analysis_dir))
-
-    if progress:
-        progress.emit("layoutlmv3", "running")
-    intelligence = analyze_page_intelligence(
+    risk_result = analyze_document_risk(
         image_path,
-        ocr_result,
-        risk_result,
         str(page_analysis_dir),
+        ocr_result=ocr_result,
+        fast_forensics=DOC_FAST_FORENSICS,
     )
-    if progress:
-        progress.emit("layoutlmv3", "completed")
-        progress.emit("donut", "completed")
-        progress.emit("document_intelligence", "completed")
+
+    intelligence = {}
+    if not DOC_FAST_FORENSICS:
+        if progress:
+            progress.emit("layoutlmv3", "running")
+        intelligence = analyze_page_intelligence(
+            image_path,
+            ocr_result,
+            risk_result,
+            str(page_analysis_dir),
+        )
+        if progress:
+            progress.emit("layoutlmv3", "completed")
+            progress.emit("donut", "completed")
+            progress.emit("document_intelligence", "completed")
 
     raw_analysis = risk_result.get("raw_analysis", {}) or {}
     region_analysis = raw_analysis.get("regions", {}) or {}
@@ -339,48 +346,47 @@ def _process_pages_parallel(
     source_pdf: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     pages: List[Optional[Dict[str, Any]]] = [None] * len(page_images)
-    workers = min(MAX_PARALLEL_PAGES, len(page_images))
     ocr_pages = ocr_pages or set(range(1, len(page_images) + 1))
+    pool = get_worker_pool()
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(
-                _process_single_page,
-                img,
-                idx + 1,
-                output_dir,
-                (idx + 1) in ocr_pages,
-                str(source_pdf) if doc_type == "PDF" else None,
-                progress,
-            ): idx
-            for idx, img in enumerate(page_images)
-        }
-        completed = 0
-        for future in as_completed(futures):
-            idx = futures[future]
-            try:
-                pages[idx] = future.result()
-            except Exception as exc:
-                logger.error("Page %s failed: %s", idx + 1, exc)
-                pages[idx] = {
-                    "page_number": idx + 1,
-                    "image": page_images[idx],
-                    "ocr": {"error": str(exc)},
-                    "risk": {
-                        "risk_score": 0,
-                        "confidence": 0,
-                        "overall_verdict": "PAGE ANALYSIS FAILED",
-                        "findings": [],
-                    },
-                    "heatmap": None,
-                }
-            completed += 1
-            if progress:
-                progress.emit(
-                    "region",
-                    "running",
-                    extra={"page": idx + 1, "completed": completed, "total": len(page_images)},
-                )
+    futures = {
+        pool.submit(
+            _process_single_page,
+            img,
+            idx + 1,
+            output_dir,
+            (idx + 1) in ocr_pages,
+            str(source_pdf) if doc_type == "PDF" else None,
+            progress,
+        ): idx
+        for idx, img in enumerate(page_images)
+    }
+    completed = 0
+    for future in as_completed(futures):
+        idx = futures[future]
+        try:
+            pages[idx] = future.result()
+        except Exception as exc:
+            logger.error("Page %s failed: %s", idx + 1, exc)
+            pages[idx] = {
+                "page_number": idx + 1,
+                "image": page_images[idx],
+                "ocr": {"error": str(exc)},
+                "risk": {
+                    "risk_score": 0,
+                    "confidence": 0,
+                    "overall_verdict": "PAGE ANALYSIS FAILED",
+                    "findings": [],
+                },
+                "heatmap": None,
+            }
+        completed += 1
+        if progress:
+            progress.emit(
+                "region",
+                "running",
+                extra={"page": idx + 1, "completed": completed, "total": len(page_images)},
+            )
 
     if progress:
         progress.emit("region", "completed")

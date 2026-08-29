@@ -7,8 +7,14 @@
  *   ApplicationError   — HTTP 4xx/5xx from a reachable backend
  */
 import { API_BASE_URL, API_ORIGIN, apiUrl, originUrl } from "../config/api";
+import {
+  BackendGateError,
+  prepareGatedFetch,
+  isBackendGateOnline,
+} from "./connectivityGate";
 
 export { API_BASE_URL, API_ORIGIN, apiUrl, originUrl };
+export { BackendGateError, isBackendGateOnline };
 
 /** True network/connectivity failure — does NOT control BackendStatus. */
 export class ConnectivityError extends Error {
@@ -34,7 +40,7 @@ export class ApplicationError extends Error {
 
 /** @deprecated Use ConnectivityError — kept so older imports keep working */
 export class BackendOfflineError extends ConnectivityError {
-  constructor(message = "Connectivity Error") {
+  constructor(message = "Backend Offline") {
     super(message);
     this.name = "BackendOfflineError";
     this.code = "BACKEND_OFFLINE";
@@ -63,6 +69,7 @@ async function getApiError(response, defaultMessage) {
 
 function isConnectivityFailure(error) {
   if (error instanceof ConnectivityError) return true;
+  if (error instanceof BackendGateError) return true;
   if (error?.name === "AbortError") return true;
   const msg = String(error?.message || error || "");
   return (
@@ -77,8 +84,11 @@ function isConnectivityFailure(error) {
 
 function toConnectivityError(error) {
   if (error instanceof ConnectivityError) return error;
+  if (error instanceof BackendGateError) {
+    return new ConnectivityError(error.message);
+  }
   return new ConnectivityError(
-    error?.name === "AbortError" ? "Request timed out" : "Connectivity Error"
+    error?.name === "AbortError" ? "Request cancelled" : "Connectivity Error"
   );
 }
 
@@ -93,36 +103,55 @@ function toApplicationError(response, defaultMessage, endpoint = "") {
 }
 
 /**
- * Central fetch — returns Response when reachable.
- * Throws ConnectivityError only when the browser cannot reach the host.
- * HTTP 404/500 are NOT connectivity errors — callers must handle them.
+ * Central fetch — gated by Backend Connectivity Manager.
+ * Non-health requests are blocked while offline (no ERR_CONNECTION_REFUSED flood).
  */
 export async function apiFetch(path, options = {}) {
   const url = path.startsWith("http") ? path : apiUrl(path);
+  const token = typeof localStorage !== "undefined" ? localStorage.getItem("aiforge_access_token") : null;
+  let gated;
+  try {
+    gated = prepareGatedFetch(url, options);
+  } catch (error) {
+    throw toConnectivityError(error);
+  }
+
   try {
     return await fetch(url, {
-      ...options,
+      ...gated.options,
       headers: {
         Accept: "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(options.headers || {}),
       },
     });
   } catch (error) {
+    if (error?.name === "AbortError") {
+      throw toConnectivityError(error);
+    }
     throw toConnectivityError(error);
+  } finally {
+    gated.cleanup();
   }
 }
 
 export function isBackendHealthy(health) {
   if (!health || typeof health !== "object") return false;
   const status = String(health.status || "").toLowerCase();
-  return status === "healthy" || status === "ok";
+  return (
+    status === "healthy" ||
+    status === "ok" ||
+    status === "success" ||
+    status === "online" ||
+    Boolean(health.service)
+  );
 }
 
-const HEALTH_TIMEOUT_MS = 8000;
+const HEALTH_TIMEOUT_MS = 15000;
 
 /**
  * Health check ONLY — sole authority for Online / Offline.
- * Never used for report/upload/analysis error classification.
+ * Always allowed by the gate (isHealthRequest).
  */
 export async function checkBackendHealth() {
   const controller = new AbortController();
@@ -136,27 +165,28 @@ export async function checkBackendHealth() {
     });
 
     if (!response.ok) {
-      console.log("[Health Check]", "OFFLINE", `(HTTP ${response.status})`);
-      throw new ConnectivityError(`Health check HTTP ${response.status}`);
+      const statusMsg = `HTTP ${response.status} ${response.statusText}`;
+      throw new ConnectivityError(`Health check failed: ${statusMsg}`);
     }
 
     const data = await response.json();
+
     if (!isBackendHealthy(data)) {
-      console.log("[Health Check]", "OFFLINE", "(unhealthy payload)");
-      throw new ConnectivityError("Health check returned unhealthy status");
+      throw new ConnectivityError("Health check returned unhealthy status payload");
     }
 
-    console.log("[Health Check]", "ONLINE");
     return data;
   } catch (error) {
-    if (!(error instanceof ConnectivityError)) {
-      console.log("[Health Check]", "OFFLINE", error?.message || error);
+    if (controller.signal.aborted) {
+      throw new ConnectivityError("Health check timed out");
     }
     throw toConnectivityError(error);
   } finally {
     clearTimeout(timer);
   }
 }
+
+export const checkHealth = checkBackendHealth;
 
 export function getApiBaseUrl() {
   return API_ORIGIN;
@@ -172,12 +202,15 @@ export function formatApiError(error, fallback = "Request failed") {
 /* Evidence                                    */
 /* ========================================= */
 
-export async function uploadEvidence(file) {
+export async function uploadEvidence(file, caseId) {
+  if (!caseId) {
+    throw new Error("A case must be selected before uploading evidence.");
+  }
   const formData = new FormData();
   formData.append("file", file);
   let response;
   try {
-    response = await apiFetch("evidence/upload", {
+    response = await apiFetch(`evidence/upload?investigation_id=${encodeURIComponent(caseId)}`, {
       method: "POST",
       body: formData,
       headers: {},
@@ -194,6 +227,9 @@ export async function uploadEvidence(file) {
 }
 
 export async function listRecentEvidence(limit = 50) {
+  if (!isBackendGateOnline()) {
+    return { success: true, evidence: [] };
+  }
   const response = await apiFetch(`evidence/recent?limit=${limit}`);
   if (!response.ok) {
     if (response.status === 404) return { success: true, evidence: [] };
@@ -223,8 +259,28 @@ export function notifyEvidenceChanged(evidenceId) {
 }
 
 export function subscribeAnalysisProgress(jobId, onEvent, onError) {
+  if (!isBackendGateOnline()) {
+    if (onError) onError(new ConnectivityError("Backend Offline — progress stream blocked"));
+    return () => {};
+  }
+
   const url = apiUrl(`progress/stream/${jobId}`);
   const source = new EventSource(url);
+  let closed = false;
+
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    try {
+      source.close();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const gateWatcher = setInterval(() => {
+    if (!isBackendGateOnline()) close();
+  }, 1000);
 
   source.onmessage = (event) => {
     try {
@@ -234,7 +290,7 @@ export function subscribeAnalysisProgress(jobId, onEvent, onError) {
         data.module === "pipeline" &&
         (data.status === "completed" || data.status === "failed")
       ) {
-        source.close();
+        close();
       }
     } catch (err) {
       console.warn("Progress parse error:", err);
@@ -242,11 +298,14 @@ export function subscribeAnalysisProgress(jobId, onEvent, onError) {
   };
 
   source.onerror = (err) => {
-    source.close();
+    close();
     if (onError) onError(err);
   };
 
-  return () => source.close();
+  return () => {
+    clearInterval(gateWatcher);
+    close();
+  };
 }
 
 export async function analyzeImage(evidenceId, { onProgress, forceDeep = false } = {}) {
@@ -262,6 +321,7 @@ export async function analyzeImage(evidenceId, { onProgress, forceDeep = false }
     }
     const data = await response.json();
     notifyEvidenceChanged(evidenceId);
+    await _enrichAnalysisWithLocalization(evidenceId, data);
     // Auto-start report if backend did not already
     if (data.reports_pending !== false) {
       generateReport(evidenceId).catch(() => {});
@@ -282,8 +342,80 @@ export async function analyzeEvidence(evidenceId) {
   }
   const data = await response.json();
   notifyEvidenceChanged(evidenceId);
+  await _enrichAnalysisWithLocalization(evidenceId, data);
   generateReport(evidenceId).catch(() => {});
   return data;
+}
+
+/* ========================================= */
+/* Autonomous Investigation (Chief Investigator) */
+/* ========================================= */
+
+export async function investigateEvidence(evidenceId, { onProgress, forceDeep = false } = {}) {
+  if (!evidenceId) throw new ApplicationError("Evidence ID required", { status: 400 });
+  let unsubscribe = null;
+  if (onProgress) {
+    unsubscribe = subscribeAnalysisProgress(evidenceId, onProgress);
+  }
+  try {
+    const path = `investigate/${evidenceId}${forceDeep ? "?force_deep=true" : ""}`;
+    const response = await apiFetch(path, { method: "POST" });
+    if (!response.ok) {
+      throw await toApplicationError(
+        response,
+        "Autonomous investigation failed",
+        path
+      );
+    }
+    const data = await response.json();
+    if (data.status === "failed") {
+      throw new ApplicationError(data.reason || "Investigation failed", {
+        status: 500,
+        endpoint: path,
+      });
+    }
+    notifyEvidenceChanged(evidenceId);
+    if (data.reports_pending !== false) {
+      generateReport(evidenceId).catch(() => {});
+    }
+    return data;
+  } finally {
+    if (unsubscribe) unsubscribe();
+  }
+}
+
+export async function getInvestigation(evidenceId) {
+  const response = await apiFetch(`investigate/${evidenceId}`);
+  if (!response.ok) {
+    throw await toApplicationError(response, "Investigation not found", `investigate/${evidenceId}`);
+  }
+  return response.json();
+}
+
+export async function askInvestigatorCopilot(question, evidenceId) {
+  const response = await apiFetch("copilot/ask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, evidence_id: evidenceId || null }),
+  });
+  if (!response.ok) {
+    throw await toApplicationError(response, "Copilot request failed", "copilot/ask");
+  }
+  return response.json();
+}
+
+export async function getFraudGraph(limitNodes = 200) {
+  const response = await apiFetch(`graph/fraud?limit_nodes=${limitNodes}`);
+  if (!response.ok) throw new Error(await getApiError(response, "Graph unavailable"));
+  return response.json();
+}
+
+export async function searchInvestigationKnowledge(query, topK = 5) {
+  const response = await apiFetch(
+    `knowledge/search?q=${encodeURIComponent(query)}&top_k=${topK}`
+  );
+  if (!response.ok) throw new Error(await getApiError(response, "Knowledge search failed"));
+  return response.json();
 }
 
 export function getArtifactUrl(artifactPath) {
@@ -315,6 +447,24 @@ export async function verifySignature(referenceFile, queryFile) {
     generateReport(data.evidence_id).catch(() => {});
   }
   return data;
+}
+
+export async function compareSignatures(referenceFile, questionedFile) {
+  if (!referenceFile || !questionedFile) {
+    throw new Error("Reference and questioned signature files are required.");
+  }
+  const formData = new FormData();
+  formData.append("reference", referenceFile);
+  formData.append("questioned", questionedFile);
+  const response = await apiFetch("signature/compare", {
+    method: "POST",
+    body: formData,
+    headers: {},
+  });
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Signature comparison failed"));
+  }
+  return response.json();
 }
 
 export async function analyzeCopyMove(evidenceId) {
@@ -355,6 +505,7 @@ export async function analyzeDocument(evidenceId, { onProgress } = {}) {
     }
     const data = await response.json();
     notifyEvidenceChanged(evidenceId);
+    await _enrichAnalysisWithLocalization(evidenceId, data);
     generateReport(evidenceId).catch(() => {});
     return data;
   } finally {
@@ -397,28 +548,14 @@ export async function analyzeVideo(videoFile, { onProgress } = {}) {
 
 export async function runJuryAnalysis({
   evidenceId,
-  filename,
-  analysis,
-  tampering,
-  documentAnalysis,
-  videoAnalysis,
-  signatureResult,
 }) {
-  if (!analysis && !tampering && !documentAnalysis && !videoAnalysis && !signatureResult) {
-    throw new Error("Forensic analysis data is required for jury synthesis.");
-  }
+  if (!evidenceId) throw new Error("Evidence ID is required for jury analysis.");
 
   const response = await apiFetch("jury/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       evidence_id: evidenceId || null,
-      filename: filename || null,
-      analysis: analysis || {},
-      tampering: tampering || {},
-      document_analysis: documentAnalysis || null,
-      video_analysis: videoAnalysis || null,
-      signature_result: signatureResult || null,
     }),
   });
 
@@ -428,9 +565,31 @@ export async function runJuryAnalysis({
   const data = await response.json();
   if (evidenceId) {
     notifyEvidenceChanged(evidenceId);
-    generateReport(evidenceId).catch(() => {});
   }
   return data;
+}
+
+export async function getForensicArtifactJson(evidenceId, artifactType) {
+  if (!evidenceId || !artifactType) return null;
+  const response = await apiFetch(
+    `evidence/artifacts/${encodeURIComponent(evidenceId)}/${encodeURIComponent(artifactType)}`
+  );
+  if (!response.ok) {
+    throw await toApplicationError(
+      response,
+      `${artifactType} is unavailable`,
+      `evidence/artifacts/${artifactType}`
+    );
+  }
+  return response.json();
+}
+
+export function getExplainableAI(evidenceId) {
+  return getForensicArtifactJson(evidenceId, "explainable_ai");
+}
+
+export function getInvestigationSummary(evidenceId) {
+  return getForensicArtifactJson(evidenceId, "investigation_summary");
 }
 
 export async function analyzeTampering(evidenceId) {
@@ -500,11 +659,24 @@ export async function analyzeDeepfakeImageUpload(file) {
 export async function getArtifactsStatus(evidenceId) {
   try {
     const response = await apiFetch(`evidence/artifacts-status/${evidenceId}`);
-    if (!response.ok) return { status: "unknown" };
-    return response.json();
+    if (!response.ok) return { status: "unknown", registry: {} };
+    const data = await response.json();
+    const registry = data.registry || {};
+    const anyAvailable = Object.values(registry).some((entry) => entry?.available);
+    return {
+      ...data,
+      registry,
+      status: data.status || (anyAvailable ? "ready" : "generating"),
+    };
   } catch {
-    return { status: "unknown" };
+    return { status: "unknown", registry: {} };
   }
+}
+
+export function isArtifactAvailable(registry, artifactType) {
+  const entry = registry?.[artifactType];
+  if (!entry) return false;
+  return Boolean(entry.available);
 }
 
 export async function getStoredReport(evidenceId) {
@@ -609,9 +781,94 @@ export async function listInvestigations(limit = 50) {
 /* Pipeline — Dashboard & Report Status        */
 /* ========================================= */
 
-const TERMINAL_REPORT_STATUSES = new Set(["completed", "failed", "ready"]);
 const GENERATING_MSG =
   "Generating professional forensic report… Estimated time: 3–5 seconds";
+
+let _performanceConfig = null;
+
+function _defaultPerformanceConfig() {
+  return {
+    report_poll_interval_ms: Number(import.meta.env.VITE_REPORT_POLL_INTERVAL_MS || 500),
+    report_poll_max_attempts: Number(import.meta.env.VITE_REPORT_POLL_MAX_ATTEMPTS || 12),
+    artifact_poll_interval_ms: Number(import.meta.env.VITE_ARTIFACT_POLL_INTERVAL_MS || 1500),
+    artifact_poll_max_attempts: Number(import.meta.env.VITE_ARTIFACT_POLL_MAX_ATTEMPTS || 20),
+    sla_targets: {
+      image_sec: Number(import.meta.env.VITE_SLA_IMAGE_SEC || 5),
+      pdf_sec: Number(import.meta.env.VITE_SLA_PDF_SEC || 10),
+      video_sec: Number(import.meta.env.VITE_SLA_VIDEO_SEC || 20),
+    },
+  };
+}
+
+/** Cached SLA + polling intervals from GET /api/health (single source of truth). */
+export async function getPerformanceConfig(force = false) {
+  if (_performanceConfig && !force) return _performanceConfig;
+  const fallback = _defaultPerformanceConfig();
+  try {
+    const response = await apiFetch("health");
+    if (response.ok) {
+      const health = await response.json();
+      const polling = health.polling || {};
+      _performanceConfig = {
+        report_poll_interval_ms:
+          polling.report_poll_interval_ms ?? fallback.report_poll_interval_ms,
+        report_poll_max_attempts:
+          polling.report_poll_max_attempts ?? fallback.report_poll_max_attempts,
+        artifact_poll_interval_ms:
+          polling.artifact_poll_interval_ms ?? fallback.artifact_poll_interval_ms,
+        artifact_poll_max_attempts:
+          polling.artifact_poll_max_attempts ?? fallback.artifact_poll_max_attempts,
+        sla_targets: health.sla_targets || fallback.sla_targets,
+      };
+      return _performanceConfig;
+    }
+  } catch {
+    /* use fallback */
+  }
+  _performanceConfig = fallback;
+  return _performanceConfig;
+}
+
+/**
+ * Bounded artifact polling — replaces per-component setInterval duplication.
+ */
+export async function pollArtifactsReady(
+  evidenceId,
+  { intervalMs, maxAttempts, onUpdate, signal } = {}
+) {
+  if (!evidenceId) return { status: "unknown" };
+  const cfg = await getPerformanceConfig();
+  const waitMs = intervalMs ?? cfg.artifact_poll_interval_ms;
+  const attemptsMax = maxAttempts ?? cfg.artifact_poll_max_attempts;
+
+  for (let attempt = 0; attempt < attemptsMax; attempt += 1) {
+    if (signal?.aborted) throw new Error("Polling cancelled");
+    const status = await getArtifactsStatus(evidenceId);
+    const registry = status.registry || {};
+    const coreReady = ["ela", "edges", "wavelet", "copy_move"].some(
+      (key) => registry[key]?.available
+    );
+    if (status.status === "ready" || coreReady) {
+      onUpdate?.(status);
+      return status;
+    }
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+  return { status: "timeout", registry: {} };
+}
+
+/**
+ * Lightweight report readiness poll (uses server-configured intervals).
+ */
+export async function pollReportReadyLight(evidenceId, options = {}) {
+  const cfg = await getPerformanceConfig();
+  return pollReportReady(evidenceId, {
+    intervalMs: options.intervalMs ?? cfg.report_poll_interval_ms,
+    maxAttempts: options.maxAttempts ?? cfg.report_poll_max_attempts,
+    onProgress: options.onProgress,
+    signal: options.signal,
+  });
+}
 
 function normalizeReportStatus(data = {}) {
   let status = String(data.status || "queued").toLowerCase();
@@ -773,10 +1030,179 @@ export async function pollReportReady(
   });
 }
 
+export async function getLocalization(evidenceId, { refresh = false } = {}) {
+  if (!isBackendGateOnline()) {
+    throw new ConnectivityError("Backend Offline — localization blocked");
+  }
+  const q = refresh ? "?refresh=true" : "";
+  const response = await apiFetch(`localization/${evidenceId}${q}`);
+  if (!response.ok) {
+    throw await toApplicationError(
+      response,
+      "Forgery localization failed",
+      `localization/${evidenceId}`
+    );
+  }
+  return response.json();
+}
+
 export async function getTimeline(evidenceId) {
   const response = await apiFetch(`timeline/${evidenceId}`);
   if (!response.ok) throw new Error(await getApiError(response, "Timeline not found"));
   return response.json();
+}
+
+export async function getEvidenceLocalization(evidenceId) {
+  if (!isBackendGateOnline()) {
+    throw new ConnectivityError("Backend Offline — localization blocked");
+  }
+  const response = await apiFetch(`evidence/${evidenceId}/localization`);
+  if (!response.ok) {
+    throw await toApplicationError(
+      response,
+      "Evidence localization failed",
+      `evidence/${evidenceId}/localization`
+    );
+  }
+  return response.json();
+}
+
+/** Canonical forensic findings. A null result signals legacy-adapter fallback. */
+export async function getEvidenceFindings(evidenceId) {
+  if (!evidenceId || !isBackendGateOnline()) return null;
+  try {
+    const response = await apiFetch(`evidence/${encodeURIComponent(evidenceId)}/findings`);
+    if (response.status === 404 || response.status === 405 || response.status === 501) {
+      return null;
+    }
+    if (!response.ok) {
+      throw await toApplicationError(
+        response,
+        "Forensic findings are unavailable",
+        `evidence/${evidenceId}/findings`
+      );
+    }
+    return response.json();
+  } catch (error) {
+    if (error instanceof ConnectivityError || error instanceof BackendGateError) return null;
+    throw error;
+  }
+}
+
+/** Linked reference metadata. A null result means no link or endpoint unavailable. */
+export async function getEvidenceReference(evidenceId) {
+  if (!evidenceId || !isBackendGateOnline()) return null;
+  try {
+    const response = await apiFetch(`evidence/${encodeURIComponent(evidenceId)}/reference`);
+    if ([404, 405, 501].includes(response.status)) return null;
+    if (!response.ok) {
+      throw await toApplicationError(
+        response,
+        "Reference evidence is unavailable",
+        `evidence/${evidenceId}/reference`
+      );
+    }
+    const data = await response.json();
+    return data?.reference ? data : null;
+  } catch (error) {
+    if (error instanceof ConnectivityError || error instanceof BackendGateError) return null;
+    throw error;
+  }
+}
+
+export async function linkEvidenceReference(evidenceId, referenceEvidenceId) {
+  if (!evidenceId || !referenceEvidenceId) {
+    throw new ApplicationError("Both evidence IDs are required", { status: 400 });
+  }
+  try {
+    const response = await apiFetch(`evidence/${encodeURIComponent(evidenceId)}/reference`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reference_id: referenceEvidenceId,
+        relationship: "supporting_reference",
+        authenticity_status: "unknown",
+      }),
+    });
+    if ([404, 405, 501].includes(response.status)) {
+      return { success: false, unavailable: true, reference: null };
+    }
+    if (!response.ok) {
+      throw await toApplicationError(
+        response,
+        "Reference evidence could not be linked",
+        `evidence/${evidenceId}/reference`
+      );
+    }
+    notifyEvidenceChanged(evidenceId);
+    return response.json();
+  } catch (error) {
+    if (error instanceof ConnectivityError || error instanceof BackendGateError) {
+      return { success: false, unavailable: true, reference: null };
+    }
+    throw error;
+  }
+}
+
+export async function deleteEvidenceReference(evidenceId) {
+  if (!evidenceId) throw new ApplicationError("Evidence ID required", { status: 400 });
+  try {
+    const response = await apiFetch(`evidence/${encodeURIComponent(evidenceId)}/reference`, {
+      method: "DELETE",
+    });
+    if ([404, 405, 501].includes(response.status)) {
+      return { success: false, unavailable: true, reference: null };
+    }
+    if (!response.ok) {
+      throw await toApplicationError(
+        response,
+        "Reference evidence could not be removed",
+        `evidence/${evidenceId}/reference`
+      );
+    }
+    notifyEvidenceChanged(evidenceId);
+    return response.json();
+  } catch (error) {
+    if (error instanceof ConnectivityError || error instanceof BackendGateError) {
+      return { success: false, unavailable: true, reference: null };
+    }
+    throw error;
+  }
+}
+
+export async function getOCRDifferenceReport(evidenceId) {
+  if (!isBackendGateOnline()) {
+    throw new ConnectivityError("Backend Offline — OCR report blocked");
+  }
+  const response = await apiFetch(`evidence/${evidenceId}/ocr-report`);
+  if (!response.ok) {
+    throw await toApplicationError(
+      response,
+      "OCR Difference report failed",
+      `evidence/${evidenceId}/ocr-report`
+    );
+  }
+  return response.json();
+}
+
+async function _enrichAnalysisWithLocalization(evidenceId, data) {
+  if (!data || !data.analysis) return;
+  try {
+    const loc = await getEvidenceLocalization(evidenceId);
+    if (loc && loc.success !== false) {
+      data.analysis.localization = loc;
+    }
+  } catch (e) {
+    console.warn("Could not fetch evidence localization", e);
+  }
+  try {
+    const ocr = await getOCRDifferenceReport(evidenceId);
+    if (ocr && ocr.success !== false) {
+      data.analysis.ocrReport = ocr;
+    }
+  } catch (e) {
+    console.warn("Could not fetch OCR difference report", e);
+  }
 }
 
 /* ========================================= */
@@ -816,8 +1242,7 @@ export async function downloadReport(
     if (!status.ready) {
       await generateReport(evidenceId);
       if (status.status !== "processing") {
-        await pollReportReady(evidenceId, {
-          maxAttempts: 8,
+        await pollReportReadyLight(evidenceId, {
           onProgress,
           signal: controller.signal,
         });
@@ -834,7 +1259,12 @@ export async function downloadReport(
 
     let response;
     try {
-      response = await fetch(pipelineUrl, { signal: controller.signal });
+      const gated = prepareGatedFetch(pipelineUrl, { signal: controller.signal });
+      try {
+        response = await fetch(pipelineUrl, gated.options);
+      } finally {
+        gated.cleanup();
+      }
     } catch (error) {
       console.log("[Report Download]", "Connectivity Error");
       throw toConnectivityError(error);
@@ -856,7 +1286,12 @@ export async function downloadReport(
         `reports/export/${evidenceId}?format=${encodeURIComponent(format)}&template=${encodeURIComponent(template)}`
       );
       try {
-        response = await fetch(fallback, { signal: controller.signal });
+        const gated = prepareGatedFetch(fallback, { signal: controller.signal });
+        try {
+          response = await fetch(fallback, gated.options);
+        } finally {
+          gated.cleanup();
+        }
       } catch (error) {
         console.log("[Report Download]", "Connectivity Error");
         throw toConnectivityError(error);
@@ -900,7 +1335,15 @@ export async function downloadReport(
     document.body.removeChild(link);
     URL.revokeObjectURL(objectUrl);
 
-    return { success: true, filename, format, template };
+    return {
+      success: true,
+      filename,
+      format,
+      template,
+      verification_id: response.headers.get("X-Verification-Id") || null,
+      verification_hash: response.headers.get("X-Verification-Hash") || null,
+      verification_url: response.headers.get("X-Verification-Url") || null,
+    };
   } catch (err) {
     if (err instanceof ApplicationError || err instanceof ConnectivityError) {
       throw err;
@@ -939,6 +1382,28 @@ export function getReportPreviewUrl(evidenceId, template = "full") {
   );
 }
 
+/** POST export — returns verification metadata without re-downloading the blob. */
+export async function exportReportMetadata(evidenceId, format = "pdf", template = "full") {
+  const response = await apiFetch(`reports/export/${evidenceId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ format, template }),
+  });
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Report export failed"));
+  }
+  return response.json();
+}
+
+/** Verify a digitally signed report by QR / cover-page verification ID. */
+export async function verifyExportedReport(verificationId) {
+  const response = await apiFetch(`reports/verify/${encodeURIComponent(verificationId)}`);
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Report verification failed"));
+  }
+  return response.json();
+}
+
 /** @deprecated Use downloadReport() */
 export async function exportReport(evidenceId, format = "pdf", template = "full") {
   return downloadReport(evidenceId, format, template);
@@ -955,10 +1420,40 @@ export function getReportDownloadUrl(evidenceId, format = "pdf", template = "ful
 /* ========================================= */
 
 export async function getDashboardStats() {
-  const response = await apiFetch("cases/dashboard/stats");
-  if (!response.ok) throw new Error("Failed to load dashboard stats");
-  const data = await response.json();
-  return data.stats;
+  if (!isBackendGateOnline()) {
+    return {
+      total_investigations: 0,
+      open_investigations: 0,
+      high_risk_cases: 0,
+      total_evidence: 0,
+      total_analyses: 0,
+      pending_assignments: 0,
+    };
+  }
+  try {
+    const response = await apiFetch("cases/dashboard/stats");
+    if (!response.ok) {
+      return {
+        total_investigations: 0,
+        open_investigations: 0,
+        high_risk_cases: 0,
+        total_evidence: 0,
+        total_analyses: 0,
+        pending_assignments: 0,
+      };
+    }
+    const data = await response.json();
+    return data.stats || {};
+  } catch {
+    return {
+      total_investigations: 0,
+      open_investigations: 0,
+      high_risk_cases: 0,
+      total_evidence: 0,
+      total_analyses: 0,
+      pending_assignments: 0,
+    };
+  }
 }
 
 export async function listCases(limit = 50) {
@@ -967,13 +1462,93 @@ export async function listCases(limit = 50) {
   return response.json();
 }
 
-export async function createCase(title, description = "") {
+export async function createCase(
+  title,
+  description = "",
+  { organization = "", department = "", priority = "normal" } = {}
+) {
   const response = await apiFetch("cases", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title, description }),
+    body: JSON.stringify({ title, description, organization, department, priority }),
   });
   if (!response.ok) throw new Error(await getApiError(response, "Failed to create case"));
+  return response.json();
+}
+
+export async function getCaseMeta() {
+  const response = await apiFetch("cases/meta");
+  if (!response.ok) throw new Error("Failed to load case metadata");
+  return response.json();
+}
+
+export async function updateCaseStatus(caseId, status) {
+  const response = await apiFetch(`cases/${caseId}/status`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  if (!response.ok) throw new Error("Failed to update case status");
+  return response.json();
+}
+
+export async function updateCasePriority(caseId, priority) {
+  const response = await apiFetch(`cases/${caseId}/priority`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ priority }),
+  });
+  if (!response.ok) throw new Error("Failed to update case priority");
+  return response.json();
+}
+
+export async function assignCaseInvestigator(caseId, investigatorId, { name, role = "lead" } = {}) {
+  const response = await apiFetch(`cases/${caseId}/assign`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      investigator_id: investigatorId,
+      investigator_name: name,
+      role,
+    }),
+  });
+  if (!response.ok) throw new Error("Failed to assign investigator");
+  return response.json();
+}
+
+export async function createCaseTask(caseId, payload) {
+  const response = await apiFetch(`cases/${caseId}/assignments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("Failed to create task");
+  return response.json();
+}
+
+export async function updateCaseTaskStatus(assignmentId, status) {
+  const response = await apiFetch(`cases/assignments/${assignmentId}?status=${encodeURIComponent(status)}`, {
+    method: "PATCH",
+  });
+  if (!response.ok) throw new Error("Failed to update task");
+  return response.json();
+}
+
+export async function getCaseTimeline(caseId) {
+  const response = await apiFetch(`cases/${caseId}/timeline`);
+  if (!response.ok) throw new Error("Failed to load timeline");
+  return response.json();
+}
+
+export async function getCaseAuditLog(caseId) {
+  const response = await apiFetch(`cases/${caseId}/audit`);
+  if (!response.ok) throw new Error("Failed to load audit log");
+  return response.json();
+}
+
+export async function listInvestigators() {
+  const response = await apiFetch("cases/investigators/list");
+  if (!response.ok) throw new Error("Failed to list investigators");
   return response.json();
 }
 
@@ -990,6 +1565,35 @@ export async function postCaseComment(caseId, body) {
     body: JSON.stringify({ body }),
   });
   if (!response.ok) throw new Error("Failed to post comment");
+  return response.json();
+}
+
+export async function getCaseGraph(caseId, focusEvidenceId, { rebuild = false } = {}) {
+  const params = new URLSearchParams();
+  if (focusEvidenceId) params.set("focus_evidence_id", focusEvidenceId);
+  if (rebuild) params.set("rebuild", "true");
+  const qs = params.toString() ? `?${params}` : "";
+  const response = await apiFetch(`cases/${caseId}/graph${qs}`);
+  if (!response.ok) throw new Error("Failed to load case graph");
+  return response.json();
+}
+
+export async function getCaseCorrelation(caseId, { rebuild = false } = {}) {
+  const qs = rebuild ? "?rebuild=true" : "";
+  const response = await apiFetch(`cases/${caseId}/correlation${qs}`);
+  if (!response.ok) throw new Error("Failed to load case correlation");
+  return response.json();
+}
+
+export async function rebuildCaseGraph(caseId) {
+  const response = await apiFetch(`cases/${caseId}/graph/rebuild`, { method: "POST" });
+  if (!response.ok) throw new Error("Failed to rebuild case graph");
+  return response.json();
+}
+
+export async function linkEvidenceToCase(caseId, evidenceId) {
+  const response = await apiFetch(`cases/${caseId}/evidence/${evidenceId}`, { method: "POST" });
+  if (!response.ok) throw new Error("Failed to link evidence to case");
   return response.json();
 }
 
@@ -1010,5 +1614,74 @@ export async function submitFeedback(payload) {
 export async function getLearningStats() {
   const response = await apiFetch("learning/stats");
   if (!response.ok) throw new Error("Failed to load learning stats");
+  return response.json();
+}
+
+export async function getEvaluationDashboard() {
+  const response = await apiFetch("learning/evaluation");
+  if (!response.ok) throw new Error("Failed to load evaluation dashboard");
+  return response.json();
+}
+
+export async function getDetectorWeights() {
+  const response = await apiFetch("learning/weights");
+  if (!response.ok) throw new Error("Failed to load detector weights");
+  return response.json();
+}
+
+export async function submitDetectorFeedback(payload) {
+  const response = await apiFetch("learning/detector-feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("Detector feedback submission failed");
+  return response.json();
+}
+
+export async function listBenchmarkDatasets() {
+  const response = await apiFetch("learning/benchmark/datasets");
+  if (!response.ok) throw new Error("Failed to load benchmark datasets");
+  return response.json();
+}
+
+export async function getBenchmarkResults() {
+  const response = await apiFetch("learning/benchmark/results");
+  if (!response.ok) throw new Error("Failed to load benchmark results");
+  return response.json();
+}
+
+export async function runBenchmark(datasetType) {
+  const qs = datasetType ? `?dataset_type=${encodeURIComponent(datasetType)}` : "";
+  const response = await apiFetch(`learning/benchmark/run${qs}`, { method: "POST" });
+  if (!response.ok) throw new Error("Benchmark run failed");
+  return response.json();
+}
+
+/* ========================================= */
+/* AI Investigator Copilot                     */
+/* ========================================= */
+
+export async function askCopilot(evidenceId, message, { sessionId } = {}) {
+  if (!isBackendGateOnline()) {
+    throw new ConnectivityError("Backend Offline — copilot blocked");
+  }
+  const response = await apiFetch(`copilot/${evidenceId}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      session_id: sessionId || undefined,
+    }),
+  });
+  if (!response.ok) {
+    throw await toApplicationError(response, "Copilot request failed", `copilot/${evidenceId}/chat`);
+  }
+  return response.json();
+}
+
+export async function getCopilotContext(evidenceId) {
+  const response = await apiFetch(`copilot/${evidenceId}/context`);
+  if (!response.ok) throw new Error("Failed to load copilot context");
   return response.json();
 }

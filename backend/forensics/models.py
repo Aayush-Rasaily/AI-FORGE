@@ -18,8 +18,12 @@ class Investigation(Base):
     title = Column(String(512), nullable=False)
     description = Column(Text, nullable=True)
     status = Column(String(32), default="open")
+    priority = Column(String(16), default="normal")
+    verdict = Column(String(64), nullable=True)
     lead_investigator_id = Column(String(128), nullable=True)
     lead_investigator_name = Column(String(256), nullable=True)
+    organization = Column(String(256), nullable=True)
+    department = Column(String(256), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -172,3 +176,19 @@ class CaseAssignment(Base):
     due_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class CaseTimelineEvent(Base):
+    """Append-only case timeline — investigation history is never deleted."""
+
+    __tablename__ = "case_timeline_events"
+
+    id = Column(String(64), primary_key=True)
+    investigation_id = Column(String(64), index=True, nullable=False)
+    event_type = Column(String(64), nullable=False, index=True)
+    actor_id = Column(String(128), nullable=False)
+    actor_name = Column(String(256), nullable=True)
+    summary = Column(String(512), nullable=False)
+    details_json = Column(Text, nullable=True)
+    evidence_id = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)

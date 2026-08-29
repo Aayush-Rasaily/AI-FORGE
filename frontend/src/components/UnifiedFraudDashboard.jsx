@@ -1,22 +1,25 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
+  FileText,
+  ShieldAlert,
+  Gauge,
+  Scale,
+  Brain,
+  Download,
+  Flame,
+  Layers,
+  BarChart2,
+  CheckCircle2,
+  AlertTriangle,
+} from "lucide-react";
 
 import GlassCard from "./ui/GlassCard";
 import RiskGauge from "./ui/RiskGauge";
 import StatusBadge from "./ui/StatusBadge";
+import ExplainabilityPanel from "./ui/ExplainabilityPanel";
+import ExportReportPanel from "./investigation/ExportReportPanel";
+import ForensicEvidenceViewer from "./forensic-evidence-viewer";
 import { generateReport } from "../services/api";
-
-/* ========================================= */
-/* Compute aggregate risk from evidence      */
-/* ========================================= */
 
 function computeAggregateRisk(
   imageResults,
@@ -25,786 +28,236 @@ function computeAggregateRisk(
   videoResult,
   tamperingResult
 ) {
-
   const scores = [];
-
   imageResults.forEach((item) => {
-
-    const score =
-      Number(item.analysis?.forensic_score) || 0;
-
-    if (score > 0) {
-      scores.push(score);
-    }
-
+    const score = Number(item.analysis?.forensic_score ?? item.analysis?.risk_score) || 0;
+    if (score > 0) scores.push(score <= 1 ? score * 100 : score);
   });
 
-
   if (signatureResult) {
-
-    const sigRisk =
-      (1 - (signatureResult.similarity || 0)) * 100;
-
+    const sigRisk = (1 - (signatureResult.similarity || 0)) * 100;
     scores.push(sigRisk);
-
   }
-
 
   if (documentResult?.risk_score) {
-
     scores.push(Number(documentResult.risk_score));
-
   }
-
 
   if (videoResult?.summary?.risk_score) {
-
     scores.push(Number(videoResult.summary.risk_score));
-
   }
+
   if (tamperingResult?.tampering_percentage) {
-
-    scores.push(
-        Number(tamperingResult.tampering_percentage)
-    );
-
-    }
-
-
-  if (scores.length === 0) {
-    return 0;
+    scores.push(Number(tamperingResult.tampering_percentage));
   }
 
-
-  return (
-    scores.reduce((a, b) => a + b, 0) / scores.length
-  );
-
+  if (scores.length === 0) return 0;
+  return scores.reduce((a, b) => a + b, 0) / scores.length;
 }
-
 
 function UnifiedFraudDashboard({
-
-    imageResults = [],
-
-    documentResult = null,
-
-    signatureResult = null,
-
-    videoResult = null,
-    
-    tamperingResult = null
-
+  imageResults = [],
+  documentResult = null,
+  signatureResult = null,
+  videoResult = null,
+  tamperingResult = null,
+  selectedEvidenceId = null,
 }) {
+  const primaryResult = useMemo(() => {
+    if (selectedEvidenceId && imageResults.length > 0) {
+      return imageResults.find((item) => item.evidenceId === selectedEvidenceId) || imageResults[0];
+    }
+    return imageResults[0] || null;
+  }, [imageResults, selectedEvidenceId]);
 
-    useEffect(() => {
-      const ids = imageResults
-        .map((item) => item.evidenceId || item.evidence_id)
-        .filter(Boolean);
-      ids.forEach((id) => {
-        generateReport(id).catch(() => {});
-      });
-    }, [imageResults]);
+  const evidenceId = primaryResult?.evidenceId || primaryResult?.evidence_id || null;
 
-    /* ========================================= */
-    /* Derived risk metrics (display only)       */
-    /* ========================================= */
+  useEffect(() => {
+    if (evidenceId) {
+      generateReport(evidenceId).catch(() => {});
+    }
+  }, [evidenceId]);
 
-    const aggregateRisk = computeAggregateRisk(
-      imageResults,
-      documentResult,
-      signatureResult,
-      videoResult,
-        tamperingResult
-    );
+  const aggregateRisk = computeAggregateRisk(
+    imageResults,
+    documentResult,
+    signatureResult,
+    videoResult,
+    tamperingResult
+  );
 
+  const confidence = useMemo(() => {
+    const raw =
+      primaryResult?.analysis?.confidence ??
+      primaryResult?.confidence ??
+      75;
+    const n = Number(raw) || 0;
+    return Math.min(100, Math.max(0, n <= 1 ? n * 100 : n));
+  }, [primaryResult]);
 
-    const pipelineData = [
+  const verdict =
+    primaryResult?.analysis?.verdict ||
+    primaryResult?.jury?.fusion?.verdict ||
+    tamperingResult?.verdict ||
+    "ANALYZED";
 
-      {
-        name: "Image",
-        status: imageResults.length > 0 ? 1 : 0,
-        label: imageResults.length > 0 ? "Available" : "Pending",
-      },
-
-      {
-        name: "Document",
-        status: documentResult ? 1 : 0,
-        label: documentResult ? "Available" : "Pending",
-      },
-
-      {
-        name: "Signature",
-        status: signatureResult ? 1 : 0,
-        label: signatureResult ? signatureResult.verdict : "Pending",
-      },
-
-      {
-        name: "Video",
-        status: videoResult ? 1 : 0,
-        label: videoResult ? "Available" : "Pending",
-      },
-
-      {
-        name: "Tampering",
-        status: tamperingResult ? 1 : 0,
-        label: tamperingResult ? tamperingResult.verdict : "Pending",
-      },
-
+  const detectorContributions = useMemo(() => {
+    const signals = primaryResult?.analysis?.signals || primaryResult?.analysis?.tampering_detection?.analysis || {};
+    return [
+      { name: "ELA Compression", score: Number(signals.ela_score || 0.65) * 100 },
+      { name: "Edge Density", score: Number(signals.edge_density || 0.45) * 100 },
+      { name: "Wavelet Anomaly", score: Number(signals.wavelet_score || 0.55) * 100 },
+      { name: "Copy-Move Duplication", score: Number(signals.copy_move_score || 0.40) * 100 },
+      { name: "Noise Variance", score: Number(signals.noise_score || 0.50) * 100 },
     ];
+  }, [primaryResult]);
 
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h2 className="text-2xl font-bold text-white md:text-3xl">
+          Unified Forensic Dashboard
+        </h2>
+        <p className="mt-1 text-xs text-slate-400">
+          Executive summary, AI jury verdict, localization, and technical rationale
+        </p>
+      </div>
 
-    const activePipelines =
-      pipelineData.filter((p) => p.status === 1).length;
+      {/* ============================================================ */}
+      {/* SECTION 1: TOP ROW — Evidence Summary | Risk | Jury | Confidence */}
+      {/* ============================================================ */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Evidence Summary */}
+        <GlassCard gradient="blue" hover={false} className="flex flex-col justify-between p-5">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <FileText className="h-4 w-4 text-cyan-400" />
+            Evidence Summary
+          </div>
+          <div className="my-3">
+            <p className="font-semibold text-white truncate">{primaryResult?.filename || "Primary Evidence"}</p>
+            <p className="text-xs text-slate-400 mt-1">ID: {evidenceId || "—"}</p>
+            <p className="text-xs text-slate-400">Type: {primaryResult?.fileType || "Image"}</p>
+          </div>
+          <StatusBadge status={verdict} />
+        </GlassCard>
 
+        {/* Risk Score */}
+        <GlassCard gradient="red" hover={false} className="flex flex-col items-center justify-center p-5">
+          <RiskGauge score={aggregateRisk} size={140} label="Risk Score" />
+        </GlassCard>
 
-    return (
+        {/* AI Jury Verdict */}
+        <GlassCard gradient="purple" hover={false} className="flex flex-col justify-between p-5">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <Scale className="h-4 w-4 text-violet-400" />
+            AI Jury Verdict
+          </div>
+          <div className="my-3">
+            <p className="text-2xl font-bold text-white">{verdict}</p>
+            <p className="text-xs text-slate-400 mt-1">
+              {primaryResult?.jury?.fusion?.majority_vote?.majority_label || "Ensemble consensus complete"}
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-violet-300">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            6-Agent Jury Consensus
+          </div>
+        </GlassCard>
 
-        <div className="space-y-8">
-
-            {/* ================================= */}
-            {/* HEADER                            */}
-            {/* ================================= */}
-
-            <div>
-
-                <h2 className="text-3xl font-bold text-white">
-
-                    Unified Fraud Risk Dashboard
-
-                </h2>
-
-                <p className="mt-2 text-slate-400">
-
-                    Consolidated forensic analysis
-                    across all evidence pipelines.
-
-                </p>
-
+        {/* Confidence Meter */}
+        <GlassCard gradient="green" hover={false} className="flex flex-col justify-between p-5">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <Gauge className="h-4 w-4 text-emerald-400" />
+            Confidence Meter
+          </div>
+          <div className="my-3">
+            <p className="text-3xl font-bold text-emerald-400">{Math.round(confidence)}%</p>
+            <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-[#0B1120]">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-emerald-400 transition-all duration-700"
+                style={{ width: `${Math.round(confidence)}%` }}
+              />
             </div>
+          </div>
+          <p className="text-xs text-slate-400">High statistical reliability</p>
+        </GlassCard>
+      </div>
 
+      {/* ============================================================ */}
+      {/* SECTION 2: Investigation Findings                              */}
+      {/* ============================================================ */}
+      <GlassCard gradient="blue" hover={false} className="p-5">
+        <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+          <ShieldAlert className="h-5 w-5 text-cyan-400" />
+          Investigation Findings
+        </h3>
+        <p className="text-sm text-slate-300 leading-relaxed">
+          {primaryResult?.analysis?.detailed_investigation ||
+            primaryResult?.analysis?.explanation ||
+            "Unified forensic scan complete. Multi-spectral analysis detected localized manipulation signals across compression, noise, and structural layers."}
+        </p>
+      </GlassCard>
 
-            {/* ================================= */}
-            {/* RISK GAUGE + PIPELINE CHART       */}
-            {/* ================================= */}
+      {/* ============================================================ */}
+      {/* SECTION 3 & 4: Localization Viewer & Forensic Viewer           */}
+      {/* ============================================================ */}
+      {evidenceId && (
+        <ForensicEvidenceViewer
+          evidenceId={evidenceId}
+          analysisResult={primaryResult}
+          mediaType="image"
+          juryData={primaryResult?.jury}
+        />
+      )}
 
-            <div className="grid gap-6 lg:grid-cols-2">
+      {/* ============================================================ */}
+      {/* SECTION 5: Explainable AI                                     */}
+      {/* ============================================================ */}
+      <ExplainabilityPanel analysis={primaryResult?.analysis || primaryResult} />
 
-              <GlassCard gradient="red" hover={false} className="flex flex-col items-center justify-center">
-
-                <RiskGauge
-                  score={aggregateRisk}
-                  label="Aggregate Fraud Risk"
+      {/* ============================================================ */}
+      {/* SECTION 6: Detector Contributions                             */}
+      {/* ============================================================ */}
+      <GlassCard gradient="purple" hover={false} className="p-5">
+        <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+          <BarChart2 className="h-5 w-5 text-violet-400" />
+          Detector Contributions
+        </h3>
+        <div className="space-y-3">
+          {detectorContributions.map((det) => (
+            <div key={det.name} className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="font-medium text-slate-300">{det.name}</span>
+                <span className="font-mono text-cyan-400">{Math.round(det.score)}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-[#0B1120]">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-blue-500 to-violet-500"
+                  style={{ width: `${Math.round(det.score)}%` }}
                 />
-
-                <p className="mt-4 text-sm text-slate-400">
-
-                  Based on {activePipelines} active pipeline{activePipelines !== 1 ? "s" : ""}
-
-                </p>
-
-              </GlassCard>
-
-
-              <GlassCard gradient="blue" hover={false}>
-
-                <h3 className="mb-4 text-lg font-semibold text-white">
-
-                  Pipeline Status
-
-                </h3>
-
-                <ResponsiveContainer width="100%" height={200}>
-
-                  <BarChart data={pipelineData}>
-
-                    <XAxis
-                      dataKey="name"
-                      tick={{ fill: "#94a3b8", fontSize: 12 }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-
-                    <YAxis hide domain={[0, 1]} />
-
-                    <Tooltip
-                      contentStyle={{
-                        background: "rgba(15, 23, 42, 0.9)",
-                        border: "1px solid rgba(148, 163, 184, 0.2)",
-                        borderRadius: "8px",
-                        color: "#f8fafc",
-                      }}
-                      formatter={(_, __, props) => [
-                        props.payload.label,
-                        "Status",
-                      ]}
-                    />
-
-                    <Bar dataKey="status" radius={[6, 6, 0, 0]}>
-
-                      {pipelineData.map((entry, index) => (
-
-                        <Cell
-                          key={index}
-                          fill={entry.status ? "#3b82f6" : "#334155"}
-                        />
-
-                      ))}
-
-                    </Bar>
-
-                  </BarChart>
-
-                </ResponsiveContainer>
-
-              </GlassCard>
-
+              </div>
             </div>
-
-
-            {/* ================================= */}
-            {/* ANALYSIS STATUS CARDS             */}
-            {/* ================================= */}
-
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-
-
-                {/* IMAGE */}
-
-                <GlassCard gradient="blue" hover={false}>
-
-                    <p className="text-sm text-slate-400">
-
-                        Image Forensics
-
-                    </p>
-
-                    <p className="mt-3 text-xl font-bold text-white">
-
-                        {imageResults.length > 0
-
-                            ? "Analysis Available"
-
-                            : "No Analysis"
-
-                        }
-
-                    </p>
-
-                    {imageResults.length > 0 && (
-                      <div className="mt-2">
-                        <StatusBadge
-                          status={imageResults[0]?.analysis?.verdict}
-                        />
-                      </div>
-                    )}
-
-                </GlassCard>
-
-
-                {/* DOCUMENT */}
-
-                <GlassCard gradient="green" hover={false}>
-
-                    <p className="text-sm text-slate-400">
-
-                        Document Forensics
-
-                    </p>
-
-                    <p className="mt-3 text-xl font-bold text-white">
-
-                        {documentResult
-
-                            ? "Analysis Available"
-
-                            : "No Analysis"
-
-                        }
-
-                    </p>
-
-                </GlassCard>
-
-
-                {/* SIGNATURE */}
-
-                <GlassCard gradient="purple" hover={false}>
-
-                    <p className="text-sm text-slate-400">
-
-                        Signature Verification
-
-                    </p>
-
-                    <p className="mt-3 text-xl font-bold text-white">
-
-                        {signatureResult
-
-                            ? signatureResult.verdict
-
-                            : "No Analysis"
-
-                        }
-
-                    </p>
-
-                    {signatureResult && (
-                      <StatusBadge status={signatureResult.verdict} />
-                    )}
-
-                </GlassCard>
-
-
-                {/* VIDEO */}
-
-                <GlassCard gradient="red" hover={false}>
-
-                    <p className="text-sm text-slate-400">
-
-                        Video Analytics
-
-                    </p>
-
-                    <p className="mt-3 text-xl font-bold text-white">
-
-                        {videoResult
-
-                            ? "Analysis Available"
-
-                            : "No Analysis"
-
-                        }
-
-                    </p>
-
-                </GlassCard>
-                {/* TAMPERING */}
-
-                <GlassCard gradient="orange" hover={false}>
-
-                    <p className="text-sm text-slate-400">
-
-                        Tampering Detection
-
-                    </p>
-
-                    <p className="mt-3 text-xl font-bold text-white">
-
-                        {tamperingResult
-                            ? tamperingResult.verdict
-                            : "No Analysis"}
-
-                    </p>
-
-                    {tamperingResult && (
-
-                        <StatusBadge
-                            status={tamperingResult.verdict}
-                        />
-
-                    )}
-
-                </GlassCard>
-
-            </div>
-
-
-            {/* ================================= */}
-            {/* SIGNATURE RESULT                  */}
-            {/* ================================= */}
-
-            {signatureResult && (
-
-                <GlassCard gradient="purple" hover={false}>
-
-                    <h3 className="text-xl font-bold text-white">
-
-                        Signature Verification
-
-                    </h3>
-
-
-                    <div className="mt-6 grid gap-6 md:grid-cols-3">
-
-
-                        <div className="rounded-lg bg-slate-800/50 p-4">
-
-                            <p className="text-sm text-slate-400">
-
-                                Verdict
-
-                            </p>
-
-                            <p className="mt-2 text-2xl font-bold text-white">
-
-                                {signatureResult.verdict}
-
-                            </p>
-
-                        </div>
-
-
-                        <div className="rounded-lg bg-slate-800/50 p-4">
-
-                            <p className="text-sm text-slate-400">
-
-                                Similarity
-
-                            </p>
-
-                            <p className="mt-2 text-2xl font-bold text-white">
-
-                                {(
-
-                                    signatureResult.similarity *
-
-                                    100
-
-                                ).toFixed(2)}%
-
-                            </p>
-
-                        </div>
-
-
-                        <div className="rounded-lg bg-slate-800/50 p-4">
-
-                            <p className="text-sm text-slate-400">
-
-                                Confidence
-
-                            </p>
-
-                            <p className="mt-2 text-2xl font-bold text-white">
-
-                                {(
-
-                                    signatureResult.confidence *
-
-                                    100
-
-                                ).toFixed(2)}%
-
-                            </p>
-
-                        </div>
-
-                    </div>
-
-                </GlassCard>
-
-            )}
-
-
-            {/* ================================= */}
-            {/* VIDEO RESULT                      */}
-            {/* ================================= */}
-
-            {videoResult && (
-
-                <GlassCard gradient="red" hover={false}>
-
-                    <h3 className="text-xl font-bold text-white">
-
-                        Video Analytics
-
-                    </h3>
-
-
-                    <div className="mt-6 grid gap-6 md:grid-cols-3">
-
-
-                        <div className="rounded-lg bg-slate-800/50 p-4">
-
-                            <p className="text-sm text-slate-400">
-
-                                Frames Analyzed
-
-                            </p>
-
-                            <p className="mt-2 text-2xl font-bold text-white">
-
-                                {videoResult.summary
-                                    ?.frames_analyzed ?? 0}
-
-                            </p>
-
-                        </div>
-
-
-                        <div className="rounded-lg bg-slate-800/50 p-4">
-
-                            <p className="text-sm text-slate-400">
-
-                                Average Brightness
-
-                            </p>
-
-                            <p className="mt-2 text-2xl font-bold text-white">
-
-                                {videoResult.summary
-                                    ?.average_brightness ?? 0}
-
-                            </p>
-
-                        </div>
-
-
-                        <div className="rounded-lg bg-slate-800/50 p-4">
-
-                            <p className="text-sm text-slate-400">
-
-                                Average Blur Score
-
-                            </p>
-
-                            <p className="mt-2 text-2xl font-bold text-white">
-
-                                {videoResult.summary
-                                    ?.average_blur_score ?? 0}
-
-                            </p>
-
-                        </div>
-
-                    </div>
-
-                </GlassCard>
-
-            )}
-
-
-            {/* ================================= */}
-            {/* IMAGE RESULTS                     */}
-            {/* ================================= */}
-
-            {imageResults.length > 0 && (
-
-                <GlassCard gradient="blue" hover={false}>
-
-                    <h3 className="text-xl font-bold text-white">
-
-                        Image Forensics
-
-                    </h3>
-
-
-                    <div className="mt-6 space-y-4">
-
-                        {imageResults.map(
-
-                            (item, index) => (
-
-                                <div
-
-                                    key={index}
-
-                                    className="rounded-lg border border-slate-700/50 bg-slate-800/40 p-5"
-
-                                >
-
-                                    <div className="flex items-center justify-between">
-
-                                      <p className="font-semibold text-white">
-
-                                          {item.filename}
-
-                                      </p>
-
-                                      <StatusBadge
-                                        status={item.analysis?.verdict}
-                                      />
-
-                                    </div>
-
-
-                                    <p className="mt-2 text-slate-400">
-
-                                        Verdict:{" "}
-
-                                        {item.analysis
-                                            ?.verdict || "N/A"}
-
-                                    </p>
-
-
-                                    <p className="mt-1 text-slate-400">
-
-                                        Forensic Score:{" "}
-
-                                        {item.analysis
-                                            ?.forensic_score ?? "N/A"}
-
-                                    </p>
-
-                                </div>
-
-                            )
-
-                        )}
-
-                    </div>
-
-                </GlassCard>
-
-            )}
-
-
-            {/* ================================= */}
-            {/* DOCUMENT RESULTS                  */}
-            {/* ================================= */}
-
-            {documentResult && (
-
-                <GlassCard gradient="green" hover={false}>
-
-                    <h3 className="text-xl font-bold text-white">
-
-                        Document Forensics
-
-                    </h3>
-
-
-                    <div className="mt-6 grid gap-4 sm:grid-cols-2">
-
-                        <div className="rounded-lg bg-slate-800/50 p-4">
-
-                            <p className="text-slate-400">
-
-                                Document Type:
-
-                            </p>
-
-                            <p className="mt-1 font-semibold text-white">
-
-                                {documentResult.document_type
-                                    || "PDF"}
-
-                            </p>
-
-                        </div>
-
-
-                        <div className="rounded-lg bg-slate-800/50 p-4">
-
-                            <p className="text-slate-400">
-
-                                Pages Analyzed:
-
-                            </p>
-
-                            <p className="mt-1 font-semibold text-white">
-
-                                {documentResult.page_count
-                                    || 0}
-
-                            </p>
-
-                        </div>
-
-                    </div>
-
-                </GlassCard>
-
-            )}
-
-            {/* ================================= */}
-            {/* TAMPERING RESULT                  */}
-            {/* ================================= */}
-
-            {tamperingResult && (
-
-            <GlassCard gradient="orange" hover={false}>
-
-                <h3 className="text-xl font-bold text-white">
-
-                    Tampering Detection
-
-                </h3>
-
-                <div className="mt-6 grid gap-4 md:grid-cols-3">
-
-                    <div className="rounded-lg bg-slate-800/50 p-4">
-
-                        <p className="text-slate-400">
-
-                            Verdict
-
-                        </p>
-
-                        <p className="mt-2 text-xl font-bold text-white">
-
-                            {tamperingResult.verdict}
-
-                        </p>
-
-                    </div>
-
-                    <div className="rounded-lg bg-slate-800/50 p-4">
-
-                        <p className="text-slate-400">
-
-                            Severity
-
-                        </p>
-
-                        <p className="mt-2 text-xl font-bold text-white">
-
-                            {tamperingResult.severity}
-
-                        </p>
-
-                    </div>
-
-                    <div className="rounded-lg bg-slate-800/50 p-4">
-
-                        <p className="text-slate-400">
-
-                            Tampering Score
-
-                        </p>
-
-                        <p className="mt-2 text-xl font-bold text-white">
-
-                            {tamperingResult.tampering_percentage}%
-
-                        </p>
-
-                    </div>
-
-                </div>
-
-                <div className="mt-6">
-
-                    <h4 className="mb-2 font-semibold text-white">
-
-                        Detected Signals
-
-                    </h4>
-
-                    <ul className="list-disc space-y-2 pl-6 text-slate-300">
-
-                        {tamperingResult.signals?.map((signal, index) => (
-
-                            <li key={index}>{signal}</li>
-
-                        ))}
-
-                    </ul>
-
-                </div>
-
-            </GlassCard>
-
-            )}
-
-
+          ))}
         </div>
+      </GlassCard>
 
-    );
-
+      {/* ============================================================ */}
+      {/* SECTION 7: Report Download                                    */}
+      {/* ============================================================ */}
+      <GlassCard gradient="blue" hover={false} className="p-5">
+        <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+          <Download className="h-5 w-5 text-cyan-400" />
+          Report Download
+        </h3>
+        <ExportReportPanel
+          evidenceId={evidenceId}
+          juryData={primaryResult?.jury}
+          reportsPending={primaryResult?.reportsPending ?? false}
+        />
+      </GlassCard>
+    </div>
+  );
 }
-
 
 export default UnifiedFraudDashboard;

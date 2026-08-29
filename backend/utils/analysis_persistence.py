@@ -31,8 +31,10 @@ FILES = {
 def _write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
+    from backend.document_analysis.evidence_fusion import make_json_serializable
+    payload = make_json_serializable(data)
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, default=str)
+        json.dump(payload, f, indent=2, default=str)
     if path.exists():
         path.unlink(missing_ok=True)
     tmp.replace(path)

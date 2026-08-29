@@ -17,46 +17,27 @@ The import is intentionally local to avoid circular imports.
 
 from typing import Any
 
+from backend.utils.safe_mapping import is_mapping, snapshot_items
 
-def make_json_serializable(value: Any) -> Any:
+
+def make_json_serializable(value: Any, _stack: set | None = None) -> Any:
     """
     Recursively convert values into JSON-safe Python types.
 
-    Handles:
-        - numpy integers
-        - numpy floats
-        - numpy booleans
-        - numpy arrays
-        - torch tensors
-        - dictionaries
-        - lists
-        - tuples
-        - sets
-        - dataclasses
-        - objects with item()
-        - objects with tolist()
-
-    Returns:
-        A structure containing only JSON-compatible values.
+    Snapshot mapping keys before reading values so live EXIF objects and
+    dictionaries mutated by background analysis threads cannot raise
+    "dictionary changed size during iteration". Circular PDF object graphs
+    are replaced with a placeholder instead of overflowing the stack.
     """
-
-    # ---------------------------------------------------------
-    # None
-    # ---------------------------------------------------------
 
     if value is None:
         return None
 
-    # ---------------------------------------------------------
-    # Native Python JSON types
-    # ---------------------------------------------------------
-
     if isinstance(value, (str, int, float, bool)):
         return value
 
-    # ---------------------------------------------------------
-    # NumPy
-    # ---------------------------------------------------------
+    if _stack is None:
+        _stack = set()
 
     try:
         import numpy as np
@@ -71,143 +52,65 @@ def make_json_serializable(value: Any) -> Any:
             return bool(value)
 
         if isinstance(value, np.ndarray):
-            return make_json_serializable(
-                value.tolist()
-            )
+            return make_json_serializable(value.tolist(), _stack)
 
     except ImportError:
         pass
-
-    # ---------------------------------------------------------
-    # PyTorch
-    # ---------------------------------------------------------
 
     try:
         import torch
 
         if isinstance(value, torch.Tensor):
-
             value = value.detach().cpu()
-
             if value.numel() == 1:
                 return value.item()
-
-            return make_json_serializable(
-                value.tolist()
-            )
+            return make_json_serializable(value.tolist(), _stack)
 
     except ImportError:
         pass
 
-    # ---------------------------------------------------------
-    # Dictionary
-    # ---------------------------------------------------------
-
-    if isinstance(value, dict):
-
-        return {
-            str(key): make_json_serializable(val)
-            for key, val in value.items()
-        }
-
-    # ---------------------------------------------------------
-    # List
-    # ---------------------------------------------------------
-
-    if isinstance(value, list):
-
-        return [
-            make_json_serializable(item)
-            for item in value
-        ]
-
-    # ---------------------------------------------------------
-    # Tuple
-    # ---------------------------------------------------------
-
-    if isinstance(value, tuple):
-
-        return [
-            make_json_serializable(item)
-            for item in value
-        ]
-
-    # ---------------------------------------------------------
-    # Set
-    # ---------------------------------------------------------
-
-    if isinstance(value, set):
-
-        return [
-            make_json_serializable(item)
-            for item in value
-        ]
-
-    # ---------------------------------------------------------
-    # Dataclass
-    # ---------------------------------------------------------
+    if is_mapping(value) or isinstance(value, (list, tuple, set)):
+        object_id = id(value)
+        if object_id in _stack:
+            return "<circular>"
+        _stack.add(object_id)
+        try:
+            if is_mapping(value):
+                return {
+                    str(key): make_json_serializable(val, _stack)
+                    for key, val in snapshot_items(value)
+                }
+            return [
+                make_json_serializable(item, _stack)
+                for item in value
+            ]
+        finally:
+            _stack.discard(object_id)
 
     try:
-
         from dataclasses import is_dataclass, asdict
-
-        if is_dataclass(value):
-
-            return make_json_serializable(
-                asdict(value)
-            )
-
+        if is_dataclass(value) and not isinstance(value, type):
+            return make_json_serializable(asdict(value), _stack)
     except Exception:
         pass
 
-    # ---------------------------------------------------------
-    # Objects with to_dict()
-    # ---------------------------------------------------------
-
     if hasattr(value, "to_dict"):
-
         try:
-
-            return make_json_serializable(
-                value.to_dict()
-            )
-
+            return make_json_serializable(value.to_dict(), _stack)
         except Exception:
             pass
-
-    # ---------------------------------------------------------
-    # Objects with item()
-    # ---------------------------------------------------------
 
     if hasattr(value, "item"):
-
         try:
-
-            return make_json_serializable(
-                value.item()
-            )
-
+            return make_json_serializable(value.item(), _stack)
         except Exception:
             pass
-
-    # ---------------------------------------------------------
-    # Objects with tolist()
-    # ---------------------------------------------------------
 
     if hasattr(value, "tolist"):
-
         try:
-
-            return make_json_serializable(
-                value.tolist()
-            )
-
+            return make_json_serializable(value.tolist(), _stack)
         except Exception:
             pass
-
-    # ---------------------------------------------------------
-    # Fallback
-    # ---------------------------------------------------------
 
     return str(value)
 

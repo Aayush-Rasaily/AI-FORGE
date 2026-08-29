@@ -17,5 +17,15 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // These React 19 compiler diagnostics are advisory for the existing
+      // effect-driven data loaders and compatibility components in this app.
+      "no-unused-vars": "warn",
+      "react-hooks/exhaustive-deps": "warn",
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/refs": "warn",
+      "react-refresh/only-export-components": "warn",
+    },
   },
 ])

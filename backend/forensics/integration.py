@@ -57,12 +57,24 @@ def on_analysis_complete(
 
     from backend.forensics.repository import get_evidence_record
 
-    record = get_evidence_record(evidence_id)
+    record = get_evidence_record(evidence_id) or {}
     if not record:
         logger.debug("Evidence %s not in registry — skipping custody log", evidence_id)
-        return {}
+        file_hashes = {}
+    else:
+        file_hashes = {"sha256": record.get("sha256"), "sha512": record.get("sha512")}
 
-    file_hashes = {"sha256": record["sha256"], "sha512": record["sha512"]}
+    try:
+        from backend.intelligence.reproducibility import build_tampering_reconstruction
+        pass
+    except Exception:
+        pass
+        
+    try:
+        from backend.intelligence.reconstruction import build_tampering_reconstruction
+        analysis_result["tampering_reconstruction"] = build_tampering_reconstruction(analysis_result)
+    except Exception as exc:
+        logger.warning("Tampering reconstruction failed: %s", exc)
 
     manifest = build_reproducibility_manifest(
         evidence_id=evidence_id,

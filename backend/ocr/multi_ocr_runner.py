@@ -12,6 +12,9 @@ from backend.ocr.engines.easyocr_engine import run_easyocr
 from backend.ocr.engines.paddle_engine import run_paddleocr
 from backend.ocr.engines.tesseract_engine import run_tesseract
 from backend.ocr.engines.trocr_engine import run_trocr
+from backend.ocr.semantic_parser import SemanticDocumentParser
+import os
+import json
 
 logger = logging.getLogger("ai_forge.multi_ocr")
 
@@ -67,10 +70,28 @@ def run_all_engines(
                 _emit(f"ocr_{name}", "failed")
 
     succeeded = [n for n, r in results.items() if r.get("success")]
+    
+    document_structure_dict = None
+    if fastest:
+        parser = SemanticDocumentParser()
+        doc_struct = parser.parse(fastest)
+        document_structure_dict = doc_struct.to_dict()
+        
+        # Save to analysis/document_map.json
+        analysis_dir = os.path.join(os.getcwd(), "analysis")
+        os.makedirs(analysis_dir, exist_ok=True)
+        map_path = os.path.join(analysis_dir, "document_map.json")
+        try:
+            doc_struct.save_to_file(map_path)
+            logger.info("Saved document map to %s", map_path)
+        except Exception as e:
+            logger.error("Failed to save document map: %s", e)
+
     return {
         "engine_results": results,
         "engines_run": list(OCR_ENGINES.keys()),
         "engines_succeeded": succeeded,
         "fastest_engine": fastest.get("engine") if fastest else None,
         "fastest_result": fastest,
+        "document_structure": document_structure_dict,
     }

@@ -13,6 +13,7 @@ from backend.reports.docx_exporter import export_docx
 from backend.reports.html_exporter import export_html
 from backend.reports.json_exporter import export_json
 from backend.reports.pdf_exporter import export_pdf
+from backend.reports.professional_report import build_professional_report, persist_report_sections
 from backend.reports.report_builder import build_report_bundle
 
 logger = logging.getLogger("ai_forge.reports.export")
@@ -48,6 +49,8 @@ def export_report(
     if cache_key in _file_cache:
         cached_path = Path(_file_cache[cache_key])
         if cached_path.exists():
+            from backend.reports.report_integrity import latest_verification_for
+            integrity = latest_verification_for(evidence_id, tpl)
             return {
                 "success": True,
                 "evidence_id": evidence_id,
@@ -58,9 +61,32 @@ def export_report(
                 "filename": cached_path.name,
                 "download_url": f"/api/reports/download/{evidence_id}/{cached_path.name}",
                 "cached": True,
+                "verification_id": integrity.get("verification_id"),
+                "verification_hash": integrity.get("verification_hash"),
+                "verification_url": integrity.get("verification_url"),
+            }
+
+    # Instant check for pre-generated canonical report.pdf
+    if fmt == "pdf" and tpl == "full":
+        canonical_pdf = Path("data/temp/uploads/analysis") / evidence_id / "report.pdf"
+        if canonical_pdf.exists() and canonical_pdf.stat().st_size > 1000:
+            return {
+                "success": True,
+                "evidence_id": evidence_id,
+                "report_id": f"RPT-{evidence_id}",
+                "format": "pdf",
+                "template": tpl,
+                "file_path": str(canonical_pdf.resolve()),
+                "filename": "report.pdf",
+                "download_url": f"/api/evidence/report/{evidence_id}/download",
+                "cached": True,
             }
 
     bundle = build_report_bundle(evidence_id, template=tpl, jury_data=jury_data)
+    report_view = build_professional_report(bundle)
+    persist_report_sections(bundle, report_view)
+    from backend.reports.report_integrity import attach_legal_integrity
+    integrity = attach_legal_integrity(bundle)
     report_id = bundle["meta"]["report_id"]
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"{evidence_id}_{tpl}_{ts}.{fmt}"
@@ -99,4 +125,7 @@ def export_report(
         "file_path": path,
         "filename": filename,
         "download_url": f"/api/reports/download/{evidence_id}/{filename}",
+        "verification_id": integrity.get("verification_id"),
+        "verification_hash": integrity.get("verification_hash"),
+        "verification_url": integrity.get("verification_url"),
     }

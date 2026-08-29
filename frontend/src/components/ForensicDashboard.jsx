@@ -17,6 +17,8 @@ import {
   Clock,
 } from "lucide-react";
 import RiskGauge from "./ui/RiskGauge";
+import { translateTechTerm } from "./forensic-evidence-viewer/forensicTranslator";
+
 
 const SCORE_COLORS = ["#22c55e", "#f97316", "#ef4444", "#a855f7"];
 
@@ -80,13 +82,13 @@ function ForensicDashboard({ analysis = {} }) {
   const verdict = fusion.verdict || analysis.verdict || "Unknown";
 
   const moduleScores = [
-    { name: "ELA", value: (signals.ela_score || 0) * 100 },
-    { name: "Wavelet", value: (signals.wavelet_score || 0) * 100 },
-    { name: "Copy-Move", value: (signals.copy_move_score || 0) * 100 },
-    { name: "Edge", value: (signals.edge_density || 0) * 100 },
-    { name: "Metadata", value: (signals.metadata_risk_score || 0) * 100 },
-    { name: "AI Gen", value: aiScore },
-    { name: "Deepfake", value: (signals.deepfake_probability || 0) * 100 },
+    { name: "Image Editing Detection", value: (signals.ela_score || 0) * 100 },
+    { name: "Frequency Analysis", value: (signals.wavelet_score || 0) * 100 },
+    { name: "Copied Content", value: (signals.copy_move_score || 0) * 100 },
+    { name: "Boundary Analysis", value: (signals.edge_density || 0) * 100 },
+    { name: "Document History", value: (signals.metadata_risk_score || 0) * 100 },
+    { name: "AI Generation Risk", value: aiScore },
+    { name: "Face Manipulation", value: (signals.deepfake_probability || 0) * 100 },
   ].filter((m) => m.value > 0);
 
   const timingEntries = Object.entries(timing)
@@ -117,16 +119,16 @@ function ForensicDashboard({ analysis = {} }) {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="flex flex-col items-center rounded-xl border border-[#1F2937] bg-[#111827]/80 p-4">
-          <RiskGauge score={fraudRisk} size={140} label="Fraud Risk" />
+          <RiskGauge score={fraudRisk} size={140} label="Manipulation Risk" />
         </div>
         <div className="flex flex-col items-center rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-          <RiskGauge score={authenticity} size={140} label="Authenticity" invert />
+          <RiskGauge score={authenticity} size={140} label="Document Authenticity" invert />
         </div>
         <div className="flex flex-col items-center rounded-xl border border-orange-500/20 bg-orange-500/5 p-4">
-          <RiskGauge score={manipulation} size={140} label="Manipulation" />
+          <RiskGauge score={manipulation} size={140} label="Manipulation Strength" />
         </div>
         <div className="flex flex-col items-center rounded-xl border border-violet-500/20 bg-violet-500/5 p-4">
-          <RiskGauge score={aiScore} size={140} label="AI Generation" />
+          <RiskGauge score={aiScore} size={140} label="AI-Synthesized Content Risk" />
         </div>
       </div>
 
@@ -158,7 +160,7 @@ function ForensicDashboard({ analysis = {} }) {
 
       {moduleScores.length > 0 && (
         <div className="rounded-xl border border-[#1F2937] bg-[#111827]/60 p-4">
-          <h4 className="mb-4 text-sm font-semibold text-white">Module Signal Strength</h4>
+          <h4 className="mb-4 text-sm font-semibold text-white">AI Detection Strength</h4>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={moduleScores} layout="vertical" margin={{ left: 10, right: 20 }}>

@@ -26,10 +26,11 @@ from backend.utils.timing import ModuleTimer
 
 logger = logging.getLogger("ai_forge.quick_scan")
 
-# Below this risk → skip deep scan (high confidence authentic)
-AUTHENTIC_THRESHOLD = 0.22
-# Above this → always deep scan
-SUSPICIOUS_THRESHOLD = 0.38
+from backend.utils.performance_config import (
+    QUICK_SCAN_AUTHENTIC_THRESHOLD,
+    QUICK_SCAN_FORCE_BORDERLINE_DEEP,
+    QUICK_SCAN_SUSPICIOUS_THRESHOLD,
+)
 
 
 def run_quick_scan(image_path: Path) -> Dict[str, Any]:
@@ -62,11 +63,11 @@ def run_quick_scan(image_path: Path) -> Dict[str, Any]:
     risk_score = _compute_quick_risk(signals, metadata)
     confidence = _compute_confidence(signals)
 
-    authentic_likely = risk_score < AUTHENTIC_THRESHOLD
-    needs_deep_scan = risk_score >= SUSPICIOUS_THRESHOLD or signals.get("metadata_suspicious")
+    authentic_likely = risk_score < QUICK_SCAN_AUTHENTIC_THRESHOLD
+    needs_deep_scan = risk_score >= QUICK_SCAN_SUSPICIOUS_THRESHOLD or signals.get("metadata_suspicious")
 
-    # Borderline zone — run deep scan for safety
-    if not authentic_likely and not needs_deep_scan:
+    # Borderline zone — optional deep scan (disabled in production fast mode)
+    if not authentic_likely and not needs_deep_scan and QUICK_SCAN_FORCE_BORDERLINE_DEEP:
         needs_deep_scan = True
 
     timing = timer.log_summary()

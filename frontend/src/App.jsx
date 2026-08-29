@@ -3,47 +3,40 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
 import Cases from "./pages/Cases";
 import Investigation from "./pages/Investigation";
+import Reports from "./pages/Reports";
+import Settings from "./pages/Settings";
+import Help from "./pages/Help";
+import History from "./pages/History";
 import SignatureVerification from "./pages/SignatureVerification";
 import CopyMoveDetection from "./pages/CopyMoveDetection";
+import Login, { RequireAuth } from "./pages/Login";
 import { BackendProvider } from "./context/BackendConnectivity";
+import { AuthProvider } from "./context/AuthContext";
 
 function App() {
-
   return (
     <BackendProvider>
-    <BrowserRouter>
-
-      <Routes>
-
-        {/* Dashboard */}
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/cases" element={<Cases />} />
-        <Route path="/investigation" element={<Investigation />} />
-
-        {/* Signature Verification */}
-        <Route
-          path="/signature"
-          element={<SignatureVerification />}
-        />
-
-        {/* Copy Move Detection — must be before catch-all */}
-        <Route
-          path="/copy-move"
-          element={<CopyMoveDetection />}
-        />
-
-        {/* Unknown routes — catch-all must be last */}
-        <Route
-          path="*"
-          element={<Navigate to="/" replace />}
-        />
-
-      </Routes>
-
-    </BrowserRouter>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
+            <Route path="/cases" element={<RequireAuth><Cases /></RequireAuth>} />
+            <Route path="/investigation" element={<RequireAuth><Investigation /></RequireAuth>} />
+            <Route path="/reports" element={<RequireAuth><Reports /></RequireAuth>} />
+            <Route path="/settings" element={<RequireAuth><Settings /></RequireAuth>} />
+            <Route path="/help" element={<RequireAuth><Help /></RequireAuth>} />
+            <Route path="/history" element={<RequireAuth><History /></RequireAuth>} />
+            <Route path="/signature" element={<RequireAuth><SignatureVerification /></RequireAuth>} />
+            <Route path="/signature-analysis" element={<RequireAuth><SignatureVerification /></RequireAuth>} />
+            <Route path="/copy-move" element={<RequireAuth><CopyMoveDetection /></RequireAuth>} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
     </BackendProvider>
   );
-
 }
 
 export default App;

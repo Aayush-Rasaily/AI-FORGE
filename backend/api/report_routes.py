@@ -79,6 +79,14 @@ async def preview_report(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.get("/verify/{verification_id}")
+async def verify_report(verification_id: str):
+    """Verify digitally signed report by verification ID (from QR code or cover page)."""
+    from backend.reports.report_integrity import verify_exported_report
+    result = verify_exported_report(verification_id)
+    return {"success": True, **result}
+
+
 @router.post("/export/{evidence_id}")
 async def export_report_endpoint(evidence_id: str, body: ExportRequest):
     """One-click report export — generates file and returns download URL."""
@@ -123,10 +131,18 @@ async def export_report_get(
             "json": "application/json",
             "html": "text/html",
         }
+        headers = {}
+        if result.get("verification_id"):
+            headers["X-Verification-Id"] = result["verification_id"]
+        if result.get("verification_hash"):
+            headers["X-Verification-Hash"] = result["verification_hash"]
+        if result.get("verification_url"):
+            headers["X-Verification-Url"] = result["verification_url"]
         return FileResponse(
             path=str(file_path),
             filename=result["filename"],
             media_type=media_types.get(format, "application/octet-stream"),
+            headers=headers or None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

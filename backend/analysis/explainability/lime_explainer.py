@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 
 from backend.analysis.ml_models import _load_rgb_image, embed_image, get_efficientnet_bundle
+from backend.utils.bbox_schema import normalize_bbox as _nb
 
 logger = logging.getLogger("ai_forge.lime")
 
@@ -93,7 +94,12 @@ def generate_lime_explanation(
     top_weight = float(seg_weights[top_seg])
     region_mask = labels == top_seg
     ys, xs = np.where(region_mask)
-    bbox = [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())] if len(xs) else [0, 0, w, h]
+    # Always canonical dict bbox — never raw list
+    if len(xs):
+        _raw = [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
+    else:
+        _raw = [0, 0, w, h]
+    bbox = _nb(_raw)  # → {x, y, width, height}
 
     superpixel_findings: List[Dict[str, Any]] = []
     for seg_id in np.argsort(np.abs(seg_weights))[-5:][::-1]:
@@ -104,10 +110,14 @@ def generate_lime_explanation(
         yy, xx = np.where(m)
         if len(xx) == 0:
             continue
+        # Canonical dict bbox for this superpixel
+        _sp_bbox = _nb([int(xx.min()), int(yy.min()), int(xx.max()), int(yy.max())])
         superpixel_findings.append({
             "segment": int(seg_id),
             "weight": round(sw, 4),
-            "bbox": [int(xx.min()), int(yy.min()), int(xx.max()), int(yy.max())],
+            "bbox": _sp_bbox,
+            "bounding_box": _sp_bbox,
+            "coordinates": [int(xx.min()), int(yy.min()), int(xx.max()), int(yy.max())],
             "why": (
                 f"Superpixel {seg_id} locally {'increases' if sw > 0 else 'decreases'} "
                 f"manipulation score by {abs(sw):.4f} when present."
@@ -115,7 +125,9 @@ def generate_lime_explanation(
         })
 
     why = (
-        f"LIME identified superpixel {top_seg} (bbox {bbox}) as the strongest local driver "
+        f"LIME identified superpixel {top_seg} "
+        f"(bbox x={int(bbox['x'])}, y={int(bbox['y'])}, w={int(bbox['width'])}, h={int(bbox['height'])}) "
+        f"as the strongest local driver "
         f"({'+' if top_weight >= 0 else ''}{top_weight:.4f})."
     )
 

@@ -17,7 +17,10 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.api.video_routes import router as video_router
 from backend.api.routes import router as evidence_router
-from backend.api.signature_routes import router as signature_router
+from backend.api.signature_routes import (
+    compare_alias_router,
+    router as signature_router,
+)
 from backend.api.jury_routes import router as jury_router
 from backend.api.forensics_routes import router as forensics_router
 from backend.api.custody_routes import router as custody_router
@@ -28,12 +31,27 @@ from backend.api.progress_routes import router as progress_router
 from backend.api.ws_routes import router as ws_router
 from backend.api.pipeline_routes import router as pipeline_router
 from backend.api.metrics_routes import router as metrics_router
+from backend.api.copilot_routes import router as copilot_router
+from backend.api.investigate_routes import router as investigate_router
+from backend.api.auth_routes import router as auth_router
+from backend.api.tasks_routes import router as tasks_router
+from backend.api.forensic_findings_routes import router as forensic_findings_router
 from backend.middleware.logging_middleware import StructuredLoggingMiddleware
+from backend.middleware.security_middleware import SecurityMiddleware
 from backend.utils.hardware import get_device_info
-from backend.utils.performance_config import SLA_IMAGE_SEC, SLA_PDF_SEC, SLA_VIDEO_SEC
+from backend.utils.performance_config import (
+    ARTIFACT_POLL_INTERVAL_MS,
+    ARTIFACT_POLL_MAX_ATTEMPTS,
+    REPORT_POLL_INTERVAL_MS,
+    REPORT_POLL_MAX_ATTEMPTS,
+    SLA_IMAGE_SEC,
+    SLA_PDF_SEC,
+    SLA_VIDEO_SEC,
+)
 from backend.utils.inference_engine import inference_capabilities
 from backend.utils.worker_pool import shutdown_pool
 from backend.utils.model_warmup import warmup_models_async
+from backend.security.config import SERVE_DATA_STATIC
 
 # ============================================================
 # SINGLE FastAPI APPLICATION INSTANCE
@@ -70,8 +88,9 @@ _env_origins = [
 ]
 _cors_origins = list(dict.fromkeys(_DEFAULT_ORIGINS + _env_origins))
 
-# Inner middleware first (logging), then CORS last → CORS outermost
+# Inner middleware first (logging), security, then CORS last → CORS outermost
 app.add_middleware(StructuredLoggingMiddleware)
+app.add_middleware(SecurityMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -112,10 +131,16 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # API ROUTERS — all share the same app + middleware
 # ============================================================
 
+app.include_router(auth_router)
+app.include_router(tasks_router)
 app.include_router(video_router)
 app.include_router(evidence_router)
+app.include_router(forensic_findings_router)
 app.include_router(pipeline_router)
+app.include_router(investigate_router)
+app.include_router(copilot_router)
 app.include_router(signature_router)
+app.include_router(compare_alias_router)
 app.include_router(jury_router)
 app.include_router(forensics_router)
 app.include_router(custody_router)
@@ -141,6 +166,40 @@ def on_startup():
     init_db()
     init_forensic_db()
     init_learning_db()
+    try:
+        from backend.cases.case_audit import _ensure_tables
+        _ensure_tables()
+    except Exception:
+        pass
+    try:
+        from backend.security.user_service import init_auth_db
+        init_auth_db()
+    except Exception as exc:
+        logging.getLogger("ai_forge").warning("Auth init failed: %s", exc)
+    try:
+        from backend.security.temp_files import ensure_secure_dirs, run_scheduled_cleanup
+        ensure_secure_dirs()
+        run_scheduled_cleanup()
+        import threading
+        from backend.security.config import TEMP_CLEANUP_INTERVAL_SEC
+
+        def _cleanup_loop():
+            import time
+            while True:
+                time.sleep(TEMP_CLEANUP_INTERVAL_SEC)
+                try:
+                    run_scheduled_cleanup()
+                except Exception:
+                    pass
+
+        threading.Thread(target=_cleanup_loop, daemon=True, name="temp_cleanup").start()
+    except Exception:
+        pass
+    try:
+        from backend.learning.benchmark import _ensure_datasets
+        _ensure_datasets()
+    except Exception:
+        pass
     try:
         from backend.learning.engine import register_model_version
 
@@ -170,11 +229,12 @@ def on_shutdown():
     shutdown_pool()
 
 
-app.mount(
-    "/data",
-    StaticFiles(directory="data"),
-    name="data",
-)
+if SERVE_DATA_STATIC:
+    app.mount(
+        "/data",
+        StaticFiles(directory="data"),
+        name="data",
+    )
 
 
 @app.get("/")
@@ -187,15 +247,39 @@ def root():
 
 @app.get("/api/health")
 def health_check():
+    from backend.security.config import AUTH_ENABLED, EVIDENCE_ENCRYPTION_ENABLED, QUEUE_ENABLED, VIRUS_SCAN_ENABLED
+    from backend.tasks.queue import queue_depth
+
     caps = inference_capabilities()
+    redis_ok = False
+    try:
+        from backend.utils.redis_cache import _get_redis
+        redis_ok = _get_redis() is not None
+    except Exception:
+        pass
+
     return {
         "status": "healthy",
         "service": "AI-FORGE Backend",
         "hardware": get_device_info(),
         "inference": caps,
+        "security": {
+            "auth_enabled": AUTH_ENABLED,
+            "encryption_enabled": EVIDENCE_ENCRYPTION_ENABLED,
+            "virus_scan_enabled": VIRUS_SCAN_ENABLED,
+            "queue_enabled": QUEUE_ENABLED,
+            "redis_connected": redis_ok,
+            "queue_depth": queue_depth(),
+        },
         "sla_targets": {
             "image_sec": SLA_IMAGE_SEC,
             "pdf_sec": SLA_PDF_SEC,
             "video_sec": SLA_VIDEO_SEC,
+        },
+        "polling": {
+            "report_poll_interval_ms": REPORT_POLL_INTERVAL_MS,
+            "report_poll_max_attempts": REPORT_POLL_MAX_ATTEMPTS,
+            "artifact_poll_interval_ms": ARTIFACT_POLL_INTERVAL_MS,
+            "artifact_poll_max_attempts": ARTIFACT_POLL_MAX_ATTEMPTS,
         },
     }

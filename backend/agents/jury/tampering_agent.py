@@ -63,6 +63,18 @@ def run_tampering_agent(
                 confidence,
             ))
 
+    # Incorporate localized regions
+    regions = tampering.get("regions") or tampering_analysis.get("regions") or []
+    for r in regions:
+        finding = build_finding(
+            "tampering",
+            r.get("detector", "Detector") + " anomaly",
+            r.get("reason", "Suspicious region detected"),
+            r.get("confidence", confidence),
+        )
+        finding["bbox"] = r.get("bbox")
+        findings.append(finding)
+
     # Human-readable verdict mapping
     verdict_map = {
         "HIGHLY_SUSPICIOUS": "Manipulated",

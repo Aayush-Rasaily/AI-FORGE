@@ -3,9 +3,9 @@ import { Sparkles, ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAnimatedCounter } from "../../hooks/useAnimatedCounter";
 
-function HeroSection() {
-  const cases = useAnimatedCounter(128);
-  const accuracy = useAnimatedCounter(97);
+function HeroSection({ totalInvestigations = 0, backendOnline = false }) {
+  const cases = useAnimatedCounter(Number(totalInvestigations) || 0);
+  const accuracy = useAnimatedCounter(backendOnline ? 97 : 0);
 
   return (
     <motion.section

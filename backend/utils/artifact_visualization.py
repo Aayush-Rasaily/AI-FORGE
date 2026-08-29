@@ -106,3 +106,42 @@ def render_wavelet_heatmap(original_bgr: np.ndarray, wavelet_map: np.ndarray) ->
 def load_bgr(image_path: str) -> Optional[np.ndarray]:
     img = cv2.imread(str(image_path))
     return img
+
+
+def render_noise_heatmap(original_bgr: np.ndarray, noise_map: np.ndarray) -> np.ndarray:
+    """Noise inconsistency heatmap — highlights regions with abnormal residual noise."""
+    if noise_map.ndim == 3:
+        noise_map = cv2.cvtColor(noise_map, cv2.COLOR_BGR2GRAY)
+
+    nnorm = cv2.normalize(noise_map, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    heatmap = cv2.applyColorMap(nnorm, cv2.COLORMAP_HOT)
+
+    if original_bgr.shape[:2] != heatmap.shape[:2]:
+        heatmap = cv2.resize(heatmap, (original_bgr.shape[1], original_bgr.shape[0]))
+
+    mask = (nnorm > np.percentile(nnorm, 70)).astype(np.float32)
+    mask = cv2.GaussianBlur(mask, (13, 13), 0)[..., None]
+    return (original_bgr * (1 - mask * 0.55) + heatmap * (mask * 0.55)).astype(np.uint8)
+
+
+def render_metadata_overlay(original_bgr: np.ndarray, lines: list[str]) -> np.ndarray:
+    """Simple metadata annotation overlay for forensic review."""
+    overlay = original_bgr.copy()
+    h, w = overlay.shape[:2]
+    panel_h = min(h, 28 + len(lines[:12]) * 22)
+    cv2.rectangle(overlay, (0, 0), (w, panel_h), (20, 24, 32), -1)
+    cv2.rectangle(overlay, (0, 0), (w, panel_h), (60, 120, 180), 1)
+    cv2.putText(overlay, "METADATA FORENSICS", (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (180, 220, 255), 1)
+    for i, line in enumerate(lines[:12]):
+        cv2.putText(
+            overlay,
+            str(line)[:90],
+            (12, 44 + i * 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.42,
+            (200, 210, 220),
+            1,
+            cv2.LINE_AA,
+        )
+    return cv2.addWeighted(original_bgr, 0.35, overlay, 0.65, 0)
+

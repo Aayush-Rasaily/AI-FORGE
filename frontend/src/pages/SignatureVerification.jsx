@@ -6,8 +6,8 @@ function SignatureVerification() {
   return (
 
     <AppLayout
-      title="Signature Verification"
-      subtitle="Siamese Neural Network signature authentication"
+      title="Signature Analysis"
+      subtitle="Identity and handwritten signature examination"
     >
 
       <SignatureVerificationForm />

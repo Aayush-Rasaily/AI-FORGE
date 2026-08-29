@@ -32,6 +32,12 @@ def warmup_models_async() -> None:
             # CLIP is largest — load last
             get_clip_bundle()
             logger.info("Model warmup complete")
+            try:
+                from backend.ocr.engines.easyocr_engine import get_easyocr_reader
+                get_easyocr_reader()
+                logger.info("OCR reader warmup complete")
+            except Exception as ocr_exc:
+                logger.debug("OCR warmup skipped: %s", ocr_exc)
         except Exception as exc:
             logger.warning("Model warmup partial failure: %s", exc)
 

@@ -29,19 +29,27 @@ This module is completely independent.
 
 from typing import Any
 
+from backend.utils.safe_mapping import is_mapping, snapshot_items
+
 
 # ================================================================
 # JSON SERIALIZATION
 # ================================================================
 
-def make_json_serializable(value: Any) -> Any:
+def make_json_serializable(value: Any, _stack: set | None = None) -> Any:
     """
     Recursively converts NumPy, Torch and other values
     into standard Python JSON-compatible values.
+
+    Snapshot mapping keys before reading values. Circular object graphs
+    are replaced with a placeholder instead of overflowing the stack.
     """
 
     if value is None:
         return None
+
+    if _stack is None:
+        _stack = set()
 
     # ------------------------------------------------------------
     # Native Python values
@@ -96,7 +104,8 @@ def make_json_serializable(value: Any) -> Any:
         ):
             return [
                 make_json_serializable(
-                    item
+                    item,
+                    _stack
                 )
                 for item in value.tolist()
             ]
@@ -122,98 +131,41 @@ def make_json_serializable(value: Any) -> Any:
                 return make_json_serializable(
                     value.detach()
                     .cpu()
-                    .item()
+                    .item(),
+                    _stack
                 )
 
             return make_json_serializable(
                 value.detach()
                 .cpu()
-                .tolist()
+                .tolist(),
+                _stack
             )
 
     except ImportError:
         pass
 
     # ------------------------------------------------------------
-    # Dictionary
+    # Mapping / sequence (cycle-safe)
     # ------------------------------------------------------------
 
-    if isinstance(
-        value,
-        dict
-    ):
-
-        return {
-
-            str(key):
-                make_json_serializable(
-                    val
-                )
-
-            for key, val
-            in value.items()
-
-        }
-
-    # ------------------------------------------------------------
-    # List
-    # ------------------------------------------------------------
-
-    if isinstance(
-        value,
-        list
-    ):
-
-        return [
-
-            make_json_serializable(
-                item
-            )
-
-            for item
-            in value
-
-        ]
-
-    # ------------------------------------------------------------
-    # Tuple
-    # ------------------------------------------------------------
-
-    if isinstance(
-        value,
-        tuple
-    ):
-
-        return [
-
-            make_json_serializable(
-                item
-            )
-
-            for item
-            in value
-
-        ]
-
-    # ------------------------------------------------------------
-    # Set
-    # ------------------------------------------------------------
-
-    if isinstance(
-        value,
-        set
-    ):
-
-        return [
-
-            make_json_serializable(
-                item
-            )
-
-            for item
-            in value
-
-        ]
+    if is_mapping(value) or isinstance(value, (list, tuple, set)):
+        object_id = id(value)
+        if object_id in _stack:
+            return "<circular>"
+        _stack.add(object_id)
+        try:
+            if is_mapping(value):
+                return {
+                    str(key): make_json_serializable(val, _stack)
+                    for key, val in snapshot_items(value)
+                }
+            return [
+                make_json_serializable(item, _stack)
+                for item in value
+            ]
+        finally:
+            _stack.discard(object_id)
 
     # ------------------------------------------------------------
     # Objects with item()
@@ -227,7 +179,8 @@ def make_json_serializable(value: Any) -> Any:
         try:
 
             return make_json_serializable(
-                value.item()
+                value.item(),
+                _stack
             )
 
         except Exception:
@@ -245,7 +198,8 @@ def make_json_serializable(value: Any) -> Any:
         try:
 
             return make_json_serializable(
-                value.tolist()
+                value.tolist(),
+                _stack
             )
 
         except Exception:

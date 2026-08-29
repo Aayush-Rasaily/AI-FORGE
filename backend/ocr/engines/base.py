@@ -75,16 +75,28 @@ def normalize_bbox(box: Any) -> List[List[float]]:
     return []
 
 
-def detection_from_box(box: Any, text: str, confidence: float) -> Dict[str, Any]:
+def detection_from_box(box: Any, text: str, confidence: float, page_number: int = 1) -> Dict[str, Any]:
     bbox = normalize_bbox(box)
     if not bbox:
         return {}
     x_coords = [p[0] for p in bbox]
     y_coords = [p[1] for p in bbox]
+    from backend.utils.bbox_schema import normalize_bbox as _nb_schema, bbox_to_xyxy as _bte  # noqa
+    _canon = _nb_schema(bbox)   # polygon → canonical {x,y,width,height}
+    
+    rotation = 0.0
+    if len(bbox) == 4:
+        import math
+        dx = bbox[1][0] - bbox[0][0]
+        dy = bbox[1][1] - bbox[0][1]
+        rotation = math.degrees(math.atan2(dy, dx))
+
     return {
         "text": str(text),
         "confidence": float(confidence),
-        "bbox": bbox,
+        "bbox": bbox,              # polygon list kept for OCR visualisers
+        "bounding_box": _canon,    # canonical dict for report consumers
+        "coordinates": _bte(_canon),  # xyxy list
         "left": min(x_coords),
         "right": max(x_coords),
         "top": min(y_coords),
@@ -93,16 +105,20 @@ def detection_from_box(box: Any, text: str, confidence: float) -> Dict[str, Any]
         "height": max(y_coords) - min(y_coords),
         "center_x": sum(x_coords) / len(x_coords),
         "center_y": sum(y_coords) / len(y_coords),
+        "page_number": page_number,
+        "font_height": _canon.get("height", max(y_coords) - min(y_coords)),
+        "rotation": rotation,
+        "baseline_position": max(y_coords),
     }
 
 
-def parse_raw_detections(raw: List[Any]) -> tuple[List[Dict[str, Any]], str]:
+def parse_raw_detections(raw: List[Any], page_number: int = 1) -> tuple[List[Dict[str, Any]], str]:
     detections: List[Dict[str, Any]] = []
     parts: List[str] = []
     for item in raw:
         if len(item) < 3:
             continue
-        det = detection_from_box(item[0], item[1], item[2])
+        det = detection_from_box(item[0], item[1], item[2], page_number=page_number)
         if det:
             detections.append(det)
             parts.append(det["text"])

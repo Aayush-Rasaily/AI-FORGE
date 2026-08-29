@@ -29,6 +29,16 @@ def get_bbox_coordinates(bbox):
 
     try:
 
+        # Canonical dict format: {x, y, width, height}
+        if isinstance(bbox, dict):
+            from backend.utils.bbox_schema import normalize_bbox as _nb  # noqa
+            _canon = _nb(bbox)
+            x1 = int(_canon["x"])
+            y1 = int(_canon["y"])
+            x2 = int(_canon["x"] + _canon["width"])
+            y2 = int(_canon["y"] + _canon["height"])
+            return (x1, y1, x2, y2)
+
         # Polygon format:
         #
         # [
@@ -77,20 +87,23 @@ def get_bbox_coordinates(bbox):
 
         # Flat format:
         #
-        # [x1,y1,x2,y2]
+        # [x1,y1,x2,y2] or [x,y,w,h]
 
         if len(bbox) == 4:
-
+            # Heuristic: if values[2] > values[0] by more than 1 → xyxy
+            if float(bbox[2]) > float(bbox[0]) + 1 and float(bbox[3]) > float(bbox[1]) + 1:
+                return (
+                    int(bbox[0]),
+                    int(bbox[1]),
+                    int(bbox[2]),
+                    int(bbox[3])
+                )
+            # Otherwise xywh
             return (
-
                 int(bbox[0]),
-
                 int(bbox[1]),
-
-                int(bbox[2]),
-
-                int(bbox[3])
-
+                int(bbox[0]) + int(bbox[2]),
+                int(bbox[1]) + int(bbox[3])
             )
 
 
@@ -108,6 +121,7 @@ def get_bbox_coordinates(bbox):
 
 
     return None
+
 
 
 def generate_heatmap(

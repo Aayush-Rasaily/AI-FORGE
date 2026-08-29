@@ -20,14 +20,23 @@ from backend.document_analysis.models.layoutlmv3_analyzer import analyze_layoutl
 logger = logging.getLogger("ai_forge.document_intelligence")
 
 ISSUE_WEIGHTS = {
+    "edited_paragraph": 0.16,
+    "inserted_text": 0.15,
+    "overlay_text": 0.15,
+    "ocr_mismatch": 0.14,
+    "font_inconsistency": 0.12,
+    "spacing_inconsistency": 0.10,
+    "alignment_inconsistency": 0.10,
+    "compression_difference": 0.14,
+    "fake_stamp": 0.14,
+    "fake_signature": 0.15,
+    "missing_seal": 0.12,
+    "page_replacement": 0.15,
+    "scan_quality_difference": 0.10,
+    "printer_artifacts": 0.10,
     "header_inconsistency": 0.12,
     "signature_mismatch": 0.15,
-    "fake_stamp": 0.14,
     "logo_manipulation": 0.13,
-    "wrong_font": 0.11,
-    "spacing_anomaly": 0.10,
-    "tampered_paragraph": 0.15,
-    "layout_anomaly": 0.10,
 }
 
 
@@ -38,13 +47,61 @@ def _issue(
     description: str,
     bbox: Optional[List] = None,
     extra: Optional[Dict] = None,
+    reasons: Optional[List[str]] = None,
+    page_number: int = 1,
+    paragraph_number: Optional[int] = None,
+    detectors: Optional[List[str]] = None,
+    edit_type: Optional[str] = None,
 ) -> Dict[str, Any]:
+    composite_reasons = reasons or [description]
+    conf_pct = round(min(99.0, max(45.0, score * 100)), 1)
+    
+    para_str = f", Paragraph {paragraph_number}" if paragraph_number else ""
+    summary_text = f"Page {page_number}{para_str} suspicious ({conf_pct}% confidence). Reasons: {', '.join(composite_reasons)}."
+
+    mapped_edit_type = edit_type or {
+        "header_inconsistency": "Font Mismatch",
+        "edited_paragraph": "Changed Paragraph",
+        "inserted_text": "Added Text",
+        "overlay_text": "Overlay Text",
+        "ocr_mismatch": "OCR Mismatch",
+        "font_inconsistency": "Font Mismatch",
+        "alignment_inconsistency": "Alignment Inconsistency",
+        "fake_signature": "Fake Signature",
+        "fake_stamp": "Fake Stamp",
+        "logo_manipulation": "Replaced Logo",
+        "page_replacement": "Missing / Reordered Pages",
+        "scan_quality_difference": "Different Scan Quality",
+        "printer_artifacts": "Different Printer Artifacts",
+    }.get(issue_type, "Document Anomaly")
+
+    coords = [0, 0, 0, 0]
+    if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+        if isinstance(bbox[0], (list, tuple)):
+            xs = [int(p[0]) for p in bbox[:4]]
+            ys = [int(p[1]) for p in bbox[:4]]
+            coords = [min(xs), min(ys), max(xs), max(ys)]
+        else:
+            coords = [int(b) for b in bbox[:4]]
+
     return {
         "type": issue_type,
+        "edit_type": mapped_edit_type,
         "severity": severity,
         "score": round(float(score), 4),
+        "confidence": conf_pct,
+        "confidence_pct": conf_pct,
+        "confidence_score": round(conf_pct / 100.0, 4),
         "description": description,
+        "reason": composite_reasons[0] if composite_reasons else description,
+        "reasons": composite_reasons,
+        "summary": summary_text,
+        "page": page_number,
+        "page_number": page_number,
+        "paragraph_number": paragraph_number,
         "bbox": bbox,
+        "coordinates": coords,
+        "detectors": detectors or ["Document Intelligence", "LayoutLMv3", "Donut"],
         **(extra or {}),
     }
 
@@ -63,6 +120,7 @@ def detect_header_inconsistency(
     layout_data: Dict[str, Any],
     layoutlm_result: Dict[str, Any],
     image_shape: tuple,
+    page_num: int = 1,
 ) -> List[Dict[str, Any]]:
     issues = []
     h = image_shape[0]
@@ -92,13 +150,18 @@ def detect_header_inconsistency(
             "header_inconsistency", _severity(score), score,
             "Header region shows font size or layout inconsistent with document body.",
             bbox=bbox,
+            reasons=["Font family mismatch", "Alignment inconsistency", "Header size disparity"],
+            page_number=page_num,
         ))
     return issues
 
 
-def detect_signature_mismatch(image_path: str) -> List[Dict[str, Any]]:
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def detect_signature_mismatch(image_path: str, page_num: int = 1, img: Optional[np.ndarray] = None) -> List[Dict[str, Any]]:
     issues = []
-    img = cv2.imread(str(image_path))
+    if img is None:
+        img = cv2.imread(str(image_path))
     if img is None:
         return issues
 
@@ -108,7 +171,6 @@ def detect_signature_mismatch(image_path: str) -> List[Dict[str, Any]]:
     edges = cv2.Canny(gray, 40, 120)
     ink_ratio = float(np.count_nonzero(edges)) / edges.size
 
-    # Signature-like ink blob in lower region
     if ink_ratio > 0.02:
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -122,22 +184,24 @@ def detect_signature_mismatch(image_path: str) -> List[Dict[str, Any]]:
             score = min(1.0, texture / 1200.0) if texture > 400 else 0.35
             if score >= 0.3:
                 issues.append(_issue(
-                    "signature_mismatch", _severity(score), score,
-                    "Signature region shows texture/compression anomalies — possible pasted signature.",
+                    "fake_signature", _severity(score), score,
+                    "Signature region shows compression anomalies and stroke boundary mismatch.",
                     bbox=[[x, y + int(h * 0.65)], [x + cw, y + int(h * 0.65)],
                           [x + cw, y + ch + int(h * 0.65)], [x, y + ch + int(h * 0.65)]],
+                    reasons=["Fake signature / overlay", "Stroke boundary mismatch", "Compression mismatch"],
+                    page_number=page_num,
                 ))
     return issues
 
 
-def detect_fake_stamps(image_path: str) -> List[Dict[str, Any]]:
+def detect_fake_stamps(image_path: str, page_num: int = 1, img: Optional[np.ndarray] = None) -> List[Dict[str, Any]]:
     issues = []
-    img = cv2.imread(str(image_path))
+    if img is None:
+        img = cv2.imread(str(image_path))
     if img is None:
         return issues
 
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    # Red stamp hues
     mask1 = cv2.inRange(hsv, np.array([0, 80, 80]), np.array([12, 255, 255]))
     mask2 = cv2.inRange(hsv, np.array([165, 80, 80]), np.array([180, 255, 255]))
     red_mask = cv2.bitwise_or(mask1, mask2)
@@ -169,15 +233,18 @@ def detect_fake_stamps(image_path: str) -> List[Dict[str, Any]]:
     if score >= 0.35:
         issues.append(_issue(
             "fake_stamp", _severity(score), score,
-            "Circular red stamp/seal region detected — verify authenticity (possible fake stamp).",
+            "Circular stamp/seal region detected with color/compression variance.",
             bbox=bbox,
+            reasons=["Fake stamp / seal insertion", "Color gamut variance", "Compression difference"],
+            page_number=page_num,
         ))
     return issues
 
 
-def detect_logo_manipulation(image_path: str, analysis_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+def detect_logo_manipulation(image_path: str, analysis_dir: Optional[str] = None, page_num: int = 1, img: Optional[np.ndarray] = None) -> List[Dict[str, Any]]:
     issues = []
-    img = cv2.imread(str(image_path))
+    if img is None:
+        img = cv2.imread(str(image_path))
     if img is None:
         return issues
 
@@ -198,13 +265,15 @@ def detect_logo_manipulation(image_path: str, analysis_dir: Optional[str] = None
     if score >= 0.3:
         issues.append(_issue(
             "logo_manipulation", _severity(score), score,
-            "Logo/header area shows compression or edge anomalies — possible logo replacement.",
+            "Logo/header region shows compression or edge anomalies indicating overlay logo.",
             bbox=[[0, 0], [int(w * 0.25), 0], [int(w * 0.25), int(h * 0.2)], [0, int(h * 0.2)]],
+            reasons=["Logo manipulation / overlay", "Edge density inconsistency", "Compression difference"],
+            page_number=page_num,
         ))
     return issues
 
 
-def detect_wrong_fonts(font_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+def detect_wrong_fonts(font_result: Dict[str, Any], page_num: int = 1) -> List[Dict[str, Any]]:
     issues = []
     suspicious = font_result.get("suspicious_words", []) or []
     if not suspicious:
@@ -215,21 +284,25 @@ def detect_wrong_fonts(font_result: Dict[str, Any]) -> List[Dict[str, Any]]:
     bbox = worst.get("bbox")
     if score >= 0.2:
         issues.append(_issue(
-            "wrong_font", _severity(score), score,
-            f"{count} word(s) show font/style inconsistency vs document baseline.",
+            "font_inconsistency", _severity(score), score,
+            f"{count} word(s) show font family/style variance relative to baseline.",
             bbox=bbox,
+            reasons=["Font family mismatch", "Character glyph variance", "OCR mismatch"],
+            page_number=page_num,
             extra={"suspicious_count": count},
         ))
     return issues
 
 
-def detect_spacing_anomalies(spacing_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+def detect_spacing_anomalies(spacing_result: Dict[str, Any], page_num: int = 1) -> List[Dict[str, Any]]:
     issues = []
     risk = float(spacing_result.get("risk_score", 0)) / 100.0
     if risk >= 0.2:
         issues.append(_issue(
-            "spacing_anomaly", _severity(risk), risk,
-            spacing_result.get("verdict", "Spacing or alignment anomaly detected."),
+            "spacing_inconsistency", _severity(risk), risk,
+            spacing_result.get("verdict", "Inter-word/line spacing anomaly detected."),
+            reasons=["Spacing inconsistency", "Alignment inconsistency", "Line height mismatch"],
+            page_number=page_num,
         ))
     return issues
 
@@ -238,27 +311,35 @@ def detect_tampered_paragraphs(
     region_result: Dict[str, Any],
     donut_result: Dict[str, Any],
     layoutlm_result: Dict[str, Any],
+    page_num: int = 1,
 ) -> List[Dict[str, Any]]:
     issues = []
     regions = region_result.get("high_risk_regions", []) or region_result.get("regions", [])
     parse_score = float(donut_result.get("parse_anomaly_score", 0))
     layout_score = float(layoutlm_result.get("layout_anomaly_score", 0))
 
-    for region in regions[:5]:
+    for idx, region in enumerate(regions[:5]):
         rscore = float(region.get("score", region.get("risk_score", 0)))
         if rscore >= 40:
             norm = rscore / 100.0
+            reasons = region.get("reasons") or ["Font family mismatch", "OCR mismatch", "Compression mismatch"]
             issues.append(_issue(
-                "tampered_paragraph", _severity(norm), norm,
-                "; ".join(region.get("reasons", ["Regional forensic anomaly detected."])),
+                "edited_paragraph", _severity(norm), norm,
+                f"Paragraph {idx + 1} modified with structural/font anomalies.",
                 bbox=region.get("bbox"),
+                reasons=reasons,
+                page_number=page_num,
+                paragraph_number=idx + 1,
             ))
 
     combined = max(parse_score, layout_score * 0.8)
     if combined >= 0.45 and not issues:
         issues.append(_issue(
-            "tampered_paragraph", _severity(combined), combined,
-            "Donut/LayoutLMv3 detected structural parsing inconsistency — possible paragraph tampering.",
+            "edited_paragraph", _severity(combined), combined,
+            "Structural parsing anomaly indicates edited/inserted text block.",
+            reasons=["Inserted text / overlay", "Layout anomaly", "Compression difference"],
+            page_number=page_num,
+            paragraph_number=1,
         ))
     return issues
 
@@ -279,8 +360,8 @@ def analyze_page_intelligence(
     ocr_result: Dict[str, Any],
     risk_result: Dict[str, Any],
     analysis_dir: Optional[str] = None,
+    page_num: int = 1,
 ) -> Dict[str, Any]:
-    """Run full document intelligence pipeline on one page."""
     raw = risk_result.get("raw_analysis", {}) or {}
     layout_data = raw.get("layout", {}) or {}
     font_result = raw.get("font", {}) or {}
@@ -292,17 +373,27 @@ def analyze_page_intelligence(
     img = cv2.imread(str(image_path))
     shape = img.shape[:2] if img is not None else (1000, 800)
 
-    layoutlm = analyze_layoutlmv3(image_path, ocr_detections)
-    donut = analyze_donut(image_path, ocr_text)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        f_layoutlm = executor.submit(analyze_layoutlmv3, image_path, ocr_detections)
+        f_donut = executor.submit(analyze_donut, image_path, ocr_text)
+        f_sig = executor.submit(detect_signature_mismatch, image_path, page_num, img)
+        f_stamps = executor.submit(detect_fake_stamps, image_path, page_num, img)
+        f_logo = executor.submit(detect_logo_manipulation, image_path, analysis_dir, page_num, img)
+
+        layoutlm = f_layoutlm.result()
+        donut = f_donut.result()
+        sig_issues = f_sig.result()
+        stamp_issues = f_stamps.result()
+        logo_issues = f_logo.result()
 
     issues: List[Dict[str, Any]] = []
-    issues.extend(detect_header_inconsistency(layout_data, layoutlm, shape))
-    issues.extend(detect_signature_mismatch(image_path))
-    issues.extend(detect_fake_stamps(image_path))
-    issues.extend(detect_logo_manipulation(image_path, analysis_dir))
-    issues.extend(detect_wrong_fonts(font_result))
-    issues.extend(detect_spacing_anomalies(spacing_result))
-    issues.extend(detect_tampered_paragraphs(region_result, donut, layoutlm))
+    issues.extend(detect_header_inconsistency(layout_data, layoutlm, shape, page_num=page_num))
+    issues.extend(sig_issues)
+    issues.extend(stamp_issues)
+    issues.extend(logo_issues)
+    issues.extend(detect_wrong_fonts(font_result, page_num=page_num))
+    issues.extend(detect_spacing_anomalies(spacing_result, page_num=page_num))
+    issues.extend(detect_tampered_paragraphs(region_result, donut, layoutlm, page_num=page_num))
 
     page_confidence = compute_page_confidence(issues)
     tamper_risk = round(1.0 - page_confidence, 4)
@@ -349,7 +440,6 @@ def detect_missing_pages(
     page_numbers: Optional[List[int]] = None,
     page_texts: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Detect gaps in page sequence or count mismatch."""
     page_numbers = page_numbers or list(range(1, page_count + 1))
     expected = expected_count or (max(page_numbers) if page_numbers else page_count)
     missing: List[int] = []
@@ -360,7 +450,6 @@ def detect_missing_pages(
             if i not in present:
                 missing.append(i)
 
-    # Footer / header page-number sequence gaps (e.g. Page 1, Page 2, Page 4)
     detected_nums: List[int] = []
     if page_texts:
         for text in page_texts:
@@ -382,3 +471,4 @@ def detect_missing_pages(
         "confidence": 0.85 if missing else 0.95,
         "detected_page_numbers": sorted(set(detected_nums)) if detected_nums else [],
     }
+

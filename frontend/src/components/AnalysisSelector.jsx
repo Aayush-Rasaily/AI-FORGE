@@ -1,200 +1,88 @@
+/**
+ * AnalysisSelector.jsx — Forge Investigation Type Selector
+ *
+ * Compact horizontal tab strip replacing the 8-card grid.
+ *
+ * Labels use investigator-facing language only.
+ * No technical algorithm descriptions in the primary UI.
+ * Tabs that are internal analysis capabilities (jury, heatmap, dashboard)
+ * are kept available but positioned after the primary investigation modes.
+ */
+
 import {
+  Microscope,
   Image,
-  PenTool,
   FileText,
+  PenTool,
   Video,
-  LayoutDashboard,
+  ScanFace,
   Scale,
   Layers,
-  ScanFace,
+  LayoutDashboard,
 } from "lucide-react";
 
-import GlassCard from "./ui/GlassCard";
+const PRIMARY_TABS = [
+  { id: "investigate", label: "Comprehensive",  Icon: Microscope },
+  { id: "image",       label: "Image",           Icon: Image     },
+  { id: "document",    label: "Document",         Icon: FileText  },
+  { id: "signature",   label: "Signature",        Icon: PenTool   },
+  { id: "video",       label: "Video",            Icon: Video     },
+  { id: "deepfake",    label: "Deepfake",         Icon: ScanFace  },
+];
 
-function AnalysisSelector({
-  analysisType,
-  setAnalysisType,
-}) {
+const SECONDARY_TABS = [
+  { id: "jury",      label: "Jury",      Icon: Scale          },
+  { id: "heatmap",   label: "Heatmap",   Icon: Layers         },
+  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard},
+];
 
-  const options = [
-
-    {
-      id: "image",
-      label: "Image Forensics",
-      description:
-        "ELA, Edge, Wavelet and Copy-Move Detection",
-      icon: Image,
-      activeColor:
-        "border-blue-500 bg-blue-500/10 shadow-blue-500/10",
-      iconColor: "text-blue-400",
-    },
-
-    {
-      id: "signature",
-      label: "Signature Verification",
-      description:
-        "Siamese Neural Network Signature Authentication",
-      icon: PenTool,
-      activeColor:
-        "border-purple-500 bg-purple-500/10 shadow-purple-500/10",
-      iconColor: "text-purple-400",
-    },
-
-    {
-      id: "document",
-      label: "Document Forensics",
-      description:
-        "Document authenticity and forgery detection",
-      icon: FileText,
-      activeColor:
-        "border-emerald-500 bg-emerald-500/10 shadow-emerald-500/10",
-      iconColor: "text-emerald-400",
-    },
-
-    {
-      id: "video",
-      label: "Video Analytics",
-      description:
-        "Video metadata, key-frame and forensic signal analysis",
-      icon: Video,
-      activeColor:
-        "border-red-500 bg-red-500/10 shadow-red-500/10",
-      iconColor: "text-red-400",
-    },
-
-    {
-      id: "jury",
-      label: "AI Jury System",
-      description: "Multi-agent ensemble verdict with explainable reasoning",
-      icon: Scale,
-      activeColor: "border-violet-500 bg-violet-500/10 shadow-violet-500/10",
-      iconColor: "text-violet-400",
-    },
-
-    {
-      id: "heatmap",
-      label: "Attention Heatmap",
-      description: "Fused ELA, wavelet, copy-move & tampering heatmap overlay",
-      icon: Layers,
-      activeColor: "border-orange-500 bg-orange-500/10 shadow-orange-500/10",
-      iconColor: "text-orange-400",
-    },
-
-    {
-      id: "deepfake",
-      label: "DeepFake Detection",
-      description: "Face swap, GAN artifacts, blink & compression analysis",
-      icon: ScanFace,
-      activeColor: "border-rose-500 bg-rose-500/10 shadow-rose-500/10",
-      iconColor: "text-rose-400",
-    },
-
-    {
-      id: "dashboard",
-      label: "Fraud Risk Dashboard",
-      description:
-        "Unified forensic risk assessment across all evidence",
-      icon: LayoutDashboard,
-      activeColor:
-        "border-amber-500 bg-amber-500/10 shadow-amber-500/10",
-      iconColor: "text-amber-400",
-    },
-
-  ];
+function AnalysisSelector({ analysisType, setAnalysisType }) {
+  const allTabs = [...PRIMARY_TABS, ...SECONDARY_TABS];
 
   return (
+    <div className="forge-panel">
+      {/* Tab strip */}
+      <div className="forge-tabs" role="tablist" aria-label="Investigation type">
+        {PRIMARY_TABS.map(({ id, label, Icon }) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`analysis-tab-${id}`}
+            aria-selected={analysisType === id}
+            onClick={() => setAnalysisType(id)}
+            className={`forge-tab ${analysisType === id ? "forge-tab-active" : ""}`}
+          >
+            <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            {label}
+          </button>
+        ))}
 
-    <GlassCard hover={false} className="mb-8">
+        {/* Separator before secondary tabs */}
+        <div
+          className="mx-1 my-2 w-px self-stretch"
+          style={{ background: "var(--forge-border)" }}
+          aria-hidden="true"
+        />
 
-      {/* Header */}
-
-      <h3 className="text-xl font-semibold text-white">
-
-        Select Analysis Type
-
-      </h3>
-
-      <p className="mt-2 text-sm text-slate-400">
-
-        Choose the forensic analysis pipeline
-        or view the unified fraud risk assessment.
-
-      </p>
-
-      {/* Cards */}
-
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-
-        {options.map(
-
-          ({
-            id,
-            label,
-            description,
-            icon: Icon,
-            activeColor,
-            iconColor,
-          }) => (
-
-            <button
-
-              key={id}
-
-              onClick={() => setAnalysisType(id)}
-
-              className={`group flex items-start gap-3 rounded-xl border p-4 text-left transition-all duration-200 ${
-                analysisType === id
-                  ? `${activeColor} shadow-sm`
-                  : "border-slate-700/50 bg-slate-900/30 hover:border-slate-600 hover:bg-slate-800/30"
-              }`}
-
-            >
-
-              <div
-
-                className={`mt-0.5 rounded-lg bg-white/5 p-2 ${
-                  analysisType === id
-                    ? iconColor
-                    : "text-slate-500"
-                }`}
-
-              >
-
-                <Icon
-                  className="h-5 w-5"
-                  aria-hidden="true"
-                />
-
-              </div>
-
-              <div>
-
-                <p className="font-semibold text-white">
-
-                  {label}
-
-                </p>
-
-                <p className="mt-1 text-xs leading-relaxed text-slate-400">
-
-                  {description}
-
-                </p>
-
-              </div>
-
-            </button>
-
-          )
-
-        )}
-
+        {SECONDARY_TABS.map(({ id, label, Icon }) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`analysis-tab-${id}`}
+            aria-selected={analysisType === id}
+            onClick={() => setAnalysisType(id)}
+            className={`forge-tab ${analysisType === id ? "forge-tab-active" : ""}`}
+            title={`${label} — internal analysis tool`}
+          >
+            <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            {label}
+          </button>
+        ))}
       </div>
-
-    </GlassCard>
-
+    </div>
   );
-
 }
 
 export default AnalysisSelector;

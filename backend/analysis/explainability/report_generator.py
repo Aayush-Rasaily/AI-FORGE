@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from backend.utils.bbox_schema import normalize_bbox as _nb, coords_string as _cs
+
 
 def _severity(score: float) -> str:
     if score >= 0.7:
@@ -80,6 +82,9 @@ def build_evidence_chain(
         step += 1
 
     for i, region in enumerate(suspicious_regions[:5]):
+        # Normalize bbox before displaying — handles any format safely
+        _b = _nb(region.get("bbox") or {})
+        _bstr = _cs(_b) if any(_b.values()) else str(region.get("bbox", "—"))
         chain.append({
             "step": step,
             "stage": "region",
@@ -87,9 +92,10 @@ def build_evidence_chain(
             "prediction": f"Suspicious region R{i + 1}",
             "score": round(float(region.get("confidence", 0)), 4),
             "confidence": round(float(region.get("confidence", 0)), 4),
-            "bbox": region.get("bbox"),
+            # Always canonical dict in the chain entry
+            "bbox": _b,
             "why": (
-                f"Region R{i + 1} at {region.get('bbox')} scored {region.get('confidence', 0):.0%} "
+                f"Region R{i + 1} at {_bstr} scored {region.get('confidence', 0):.0%} "
                 "across GradCAM, SHAP, LIME, and attention fusion."
             ),
         })
@@ -186,7 +192,10 @@ def generate_human_report(
             "GradCAM, SHAP, LIME, and attention fusion."
         )
         for i, r in enumerate(suspicious_regions[:3]):
-            lines.append(f"  • Region {i + 1}: bbox {r.get('bbox')} — {r.get('confidence', 0):.0%} confidence")
+            # Use coords_string for safe, human-readable display
+            _b = _nb(r.get("bbox") or {})
+            _bstr = _cs(_b) if any(_b.values()) else "unknown location"
+            lines.append(f"  • Region {i + 1}: {_bstr} — {r.get('confidence', 0):.0%} confidence")
 
     lines.append("\nKEY FINDINGS")
     for step in evidence_chain[:8]:

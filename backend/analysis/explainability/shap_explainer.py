@@ -10,6 +10,7 @@ import cv2
 import numpy as np
 
 from backend.analysis.ml_models import _load_rgb_image, embed_image, get_efficientnet_bundle
+from backend.utils.bbox_schema import normalize_bbox as _nb, bbox_to_xyxy as _bte
 
 logger = logging.getLogger("ai_forge.shap")
 
@@ -58,9 +59,13 @@ def generate_shap_attribution(
             contrib = full_score - occ_score
             attribution[gy, gx] = contrib
             if abs(contrib) > 0.02:
+                # Always emit canonical dict bbox — never a raw list
+                _bbox = {"x": x1, "y": y1, "width": max(0, x2 - x1), "height": max(0, y2 - y1)}
                 contributions.append({
                     "cell": [gx, gy],
-                    "bbox": [x1, y1, x2, y2],
+                    "bbox": _bbox,
+                    "bounding_box": _bbox,
+                    "coordinates": [x1, y1, x2, y2],
                     "contribution": round(float(contrib), 4),
                     "why": (
                         f"Occluding region ({x1},{y1})-({x2},{y2}) "
