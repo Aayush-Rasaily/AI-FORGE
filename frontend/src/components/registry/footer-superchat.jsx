@@ -1,6 +1,5 @@
 import { motion } from "framer-motion";
 import {
-  ChevronDown,
   Globe,
   Mail,
   Shield,
@@ -116,7 +115,6 @@ export default function FooterSuperchat({
             <span className="forge-footer-language" aria-label="Language: English">
               <Globe size={14} aria-hidden="true" />
               <span>English</span>
-              <ChevronDown size={13} aria-hidden="true" />
             </span>
             <span>© {copyright}</span>
             <span className="forge-footer-location">{location}</span>
