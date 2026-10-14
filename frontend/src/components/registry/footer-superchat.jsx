@@ -113,11 +113,11 @@ export default function FooterSuperchat({
       <div className="forge-footer-bottom">
         <div className="forge-footer-bottom-inner">
           <div className="forge-footer-meta">
-            <button className="forge-footer-language" type="button" aria-label="Language: English">
+            <span className="forge-footer-language" aria-label="Language: English">
               <Globe size={14} aria-hidden="true" />
               <span>English</span>
               <ChevronDown size={13} aria-hidden="true" />
-            </button>
+            </span>
             <span>© {copyright}</span>
             <span className="forge-footer-location">{location}</span>
             <nav className="forge-footer-legal" aria-label="Legal">

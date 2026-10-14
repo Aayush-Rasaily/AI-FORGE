@@ -206,7 +206,6 @@ html, body {
   border: 0;
   background: transparent;
   font: inherit;
-  cursor: pointer;
 }
 
 .forge-footer-legal { gap: 0.85rem; }
