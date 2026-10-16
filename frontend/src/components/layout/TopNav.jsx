@@ -1,9 +1,9 @@
-import { Bell, LogOut, Menu, PanelLeft, User } from "lucide-react";
+import { Bell, LogOut, PanelLeft, User } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import GlobalSearch from "./GlobalSearch";
 import BackendStatus from "../ui/BackendStatus";
 
-function TopNav({ onMenuToggle, onSidebarToggle, title, subtitle, contextLabel }) {
+function TopNav({ onSidebarToggle, title, subtitle, contextLabel }) {
   const { user, logout, isAuthenticated } = useAuth();
 
   return (
@@ -11,17 +11,9 @@ function TopNav({ onMenuToggle, onSidebarToggle, title, subtitle, contextLabel }
       <div className="forge-topnav-left">
         <button
           type="button"
-          onClick={onMenuToggle}
-          className="forge-icon-button lg:hidden"
-          aria-label="Open navigation"
-        >
-          <Menu className="h-5 w-5" />
-        </button>
-        <button
-          type="button"
           onClick={onSidebarToggle}
-          className="forge-icon-button hidden lg:inline-flex"
-          aria-label="Toggle sidebar"
+          className="forge-icon-button"
+          aria-label="Toggle navigation"
         >
           <PanelLeft className="h-4 w-4" />
         </button>

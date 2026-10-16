@@ -71,6 +71,220 @@ html, body {
 }
 
 /* ========================================= */
+/* Public legal pages + footer               */
+/* ========================================= */
+
+.forge-footer {
+  color: #fff;
+  border-top: 1px solid #1a1a2e;
+}
+
+.forge-footer-main {
+  width: min(100% - 3rem, 1120px);
+  margin: 0 auto;
+  padding: 4.5rem 0 4rem;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  gap: 5rem;
+}
+
+.forge-footer-logo {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  color: #3cc2f3;
+  border: 1px solid rgba(60, 194, 243, 0.35);
+  background: rgba(60, 194, 243, 0.08);
+  border-radius: 13px;
+  box-shadow: 0 0 32px rgba(60, 194, 243, 0.08);
+}
+
+.forge-footer-brand-name {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.86rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.forge-footer-tagline {
+  white-space: pre-line;
+  margin: 0;
+  color: #9090a0;
+  font-size: 1.12rem;
+  line-height: 1.45;
+}
+
+.forge-footer-contact {
+  display: inline-flex;
+  gap: 0.55rem;
+  align-items: center;
+  margin-top: 2rem;
+  color: #9090a0;
+  font-size: 0.82rem;
+  text-decoration: none;
+  transition: color 180ms ease, transform 180ms ease;
+}
+
+.forge-footer-contact:hover,
+.forge-footer-contact:focus-visible,
+.forge-footer-link:hover,
+.forge-footer-link:focus-visible,
+.forge-footer-legal a:hover,
+.forge-footer-legal a:focus-visible {
+  color: #3cc2f3;
+}
+
+.forge-footer-contact:focus-visible,
+.forge-footer-link:focus-visible,
+.forge-footer-legal a:focus-visible,
+.forge-footer-language:focus-visible,
+.forge-legal-back:focus-visible,
+.forge-legal-brand:focus-visible {
+  outline: 2px solid #3cc2f3;
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+
+.forge-footer-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2rem;
+}
+
+.forge-footer-heading {
+  margin: 0 0 1.3rem;
+  color: #6b6b7b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.forge-footer-links {
+  display: grid;
+  gap: 0.82rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.forge-footer-link {
+  color: #9090a0;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  text-decoration: none;
+  transition: color 180ms ease;
+}
+
+.forge-footer-bottom {
+  border-top: 1px solid #1a1a2e;
+}
+
+.forge-footer-bottom-inner {
+  width: min(100% - 3rem, 1120px);
+  margin: 0 auto;
+  padding: 1.35rem 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.forge-footer-meta,
+.forge-footer-legal,
+.forge-footer-language {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  color: #9090a0;
+  font-size: 0.75rem;
+}
+
+.forge-footer-language {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+}
+
+.forge-footer-legal { gap: 0.85rem; }
+.forge-footer-legal a { color: inherit; text-decoration: none; transition: color 180ms ease; }
+.forge-footer-location { color: #6b6b7b; }
+.forge-footer-signoff { color: #6b6b7b; font-size: 0.75rem; }
+.forge-footer-signoff span { color: #3cc2f3; }
+
+.forge-legal-page {
+  min-height: 100vh;
+  background: #0b0f1a;
+  color: #e2e8f0;
+}
+
+.forge-legal-header {
+  width: min(100% - 3rem, 1120px);
+  margin: 0 auto;
+  padding: 1.4rem 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.forge-legal-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  color: #e2e8f0;
+  text-decoration: none;
+}
+
+.forge-legal-brand strong,
+.forge-legal-brand small { display: block; }
+.forge-legal-brand strong { font-size: 0.82rem; letter-spacing: 0.12em; }
+.forge-legal-brand small { margin-top: 0.16rem; color: #6b7280; font-size: 0.66rem; }
+.forge-legal-back { display: inline-flex; align-items: center; gap: 0.45rem; color: #94a3b8; font-size: 0.78rem; text-decoration: none; }
+.forge-legal-back:hover { color: #3cc2f3; }
+
+.forge-legal-main {
+  width: min(100% - 3rem, 1120px);
+  margin: 0 auto;
+  padding: 5.5rem 0 7rem;
+}
+
+.forge-legal-intro { max-width: 720px; padding-bottom: 4.5rem; border-bottom: 1px solid #1e2533; }
+.forge-legal-eyebrow { margin: 0 0 1.4rem; color: #3cc2f3; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
+.forge-legal-intro h1 { max-width: 700px; margin: 0; color: #f8fafc; font-size: clamp(2.6rem, 6vw, 5.4rem); line-height: 0.98; letter-spacing: -0.055em; }
+.forge-legal-lede { max-width: 600px; margin: 2rem 0 0; color: #94a3b8; font-size: clamp(1rem, 1.8vw, 1.2rem); line-height: 1.65; }
+.forge-legal-updated { display: inline-flex; align-items: center; gap: 0.35rem; margin: 1.65rem 0 0; color: #6b7280; font-size: 0.75rem; }
+.forge-legal-content { max-width: 800px; padding-top: 1rem; }
+.forge-legal-section { display: grid; grid-template-columns: 3rem minmax(0, 1fr); gap: 1.4rem; padding: 2.2rem 0; border-bottom: 1px solid #161d2b; }
+.forge-legal-index { padding-top: 0.3rem; color: #3cc2f3; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; }
+.forge-legal-section h2 { margin: 0; color: #e2e8f0; font-size: 1.05rem; }
+.forge-legal-section p { margin: 0.85rem 0 0; color: #94a3b8; font-size: 0.95rem; line-height: 1.75; }
+
+@media (max-width: 760px) {
+  .forge-footer-main { width: min(100% - 2rem, 1120px); padding: 3.25rem 0 3rem; grid-template-columns: 1fr; gap: 3rem; }
+  .forge-footer-nav { gap: 1.2rem; }
+  .forge-footer-bottom-inner { width: min(100% - 2rem, 1120px); align-items: flex-start; flex-direction: column; }
+  .forge-footer-meta { flex-wrap: wrap; gap: 0.8rem 1rem; }
+  .forge-footer-legal { width: 100%; flex-wrap: wrap; }
+  .forge-legal-header, .forge-legal-main { width: min(100% - 2rem, 1120px); }
+  .forge-legal-main { padding: 3.5rem 0 4.5rem; }
+  .forge-legal-intro { padding-bottom: 3.2rem; }
+}
+
+@media (max-width: 480px) {
+  .forge-footer-nav { grid-template-columns: 1fr 1fr; }
+  .forge-footer-nav > :last-child { grid-column: 1 / -1; }
+  .forge-legal-header { align-items: flex-start; flex-direction: column; }
+  .forge-legal-section { grid-template-columns: 2rem minmax(0, 1fr); gap: 0.75rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forge-footer-contact, .forge-footer-link, .forge-footer-legal a { transition: none; }
+}
+
+/* ========================================= */
 /* Gradient Background                       */
 /* ========================================= */
 

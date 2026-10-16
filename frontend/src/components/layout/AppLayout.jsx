@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Sidebar from "./Sidebar";
 import TopNav from "./TopNav";
+import FooterSuperchat from "../registry/footer-superchat";
 
 function readCollapsed() {
   try {
@@ -30,6 +31,14 @@ function AppLayout({ children, title, subtitle, contextLabel }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  function handleNavigationToggle() {
+    if (window.innerWidth >= 1024) {
+      setCollapsed((value) => !value);
+      return;
+    }
+    setMobileOpen((value) => !value);
+  }
+
   return (
     <div className="forge-shell">
       <div className="hidden lg:block">
@@ -56,8 +65,7 @@ function AppLayout({ children, title, subtitle, contextLabel }) {
         }`}
       >
         <TopNav
-          onMenuToggle={() => setMobileOpen((value) => !value)}
-          onSidebarToggle={() => setCollapsed((value) => !value)}
+          onSidebarToggle={handleNavigationToggle}
           title={title}
           subtitle={subtitle}
           contextLabel={contextLabel}
@@ -65,6 +73,7 @@ function AppLayout({ children, title, subtitle, contextLabel }) {
         <main className="forge-page">
           <div className="forge-page-inner">{children}</div>
         </main>
+        <FooterSuperchat />
       </div>
     </div>
   );

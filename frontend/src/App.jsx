@@ -12,6 +12,7 @@ import CopyMoveDetection from "./pages/CopyMoveDetection";
 import Login, { RequireAuth } from "./pages/Login";
 import { BackendProvider } from "./context/BackendConnectivity";
 import { AuthProvider } from "./context/AuthContext";
+import LegalPage from "./pages/LegalPage";
 
 function App() {
   return (
@@ -20,6 +21,9 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/privacy" element={<LegalPage type="privacy" />} />
+            <Route path="/terms" element={<LegalPage type="terms" />} />
+            <Route path="/cookies" element={<LegalPage type="cookies" />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
             <Route path="/cases" element={<RequireAuth><Cases /></RequireAuth>} />
